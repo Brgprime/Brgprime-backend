@@ -1,0 +1,210 @@
+// BRG Prime — database schema
+// Default provider is SQLite for zero-setup local dev. To move to PostgreSQL,
+// change `provider` to "postgresql" and point DATABASE_URL at your database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  phone        String   @default("")
+  bio          String   @default("Real estate enthusiast based in Nigeria.")
+  avatarUrl    String   @default("https://i.pravatar.cc/150?u=brgprime")
+  role         String   @default("user") // "user" | "admin"
+  status       String   @default("active") // "active" | "disabled"
+
+  // Registration / OTP
+  emailVerified Boolean @default(false)
+  otpCode       String?
+  otpExpiresAt  DateTime?
+
+  // Password reset
+  resetCode      String?
+  resetExpiresAt DateTime?
+
+  // Subscription (mirrors the frontend `subscription` store)
+  planId      String    @default("free")
+  premiumUsed Int       @default(0)
+  boostsUsed  Int       @default(0)
+  renewsAt    DateTime?
+
+  joinDate  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  properties          Property[]
+  favorites           Favorite[]
+  notifications       Notification[]
+  viewings            Viewing[]
+  forumMessages       ForumMessage[]
+  payments            Payment[]
+  transactions        Transaction[]
+  subscriptionHistory SubscriptionHistory[]
+}
+
+// ─── Properties (listings) ───────────────────────────────────────────────────
+model Property {
+  id          String  @id @default(cuid())
+  title       String
+  address     String
+  description String  @default("")
+  price       Int
+  listingType String // rent | sale | lease | shortlet | commercialRent | commercialSale | land | landLease | jointVenture
+  propertyType String // apartment | house | duplex | studio | ...
+
+  bedrooms         Int      @default(0)
+  bathrooms        Int      @default(0)
+  size             Int      @default(0) // m²
+  yearBuilt        Int?
+  furnishingStatus String   @default("Unfurnished")
+  propertyCondition String  @default("Good")
+  amenities        String   @default("[]") // JSON-encoded string[]
+  images           String   @default("[]") // JSON-encoded string[]
+
+  isRecentlyPosted Boolean @default(true)
+  isVerified       Boolean @default(false)
+  isPremium        Boolean @default(false)
+  isBoosted        Boolean @default(false)
+
+  // Agent / seller display info (kept denormalised to match seeded mock data)
+  agentName   String @default("You")
+  agentAvatar String @default("https://i.pravatar.cc/150?u=agent")
+
+  rating      Float @default(0)
+  reviewCount Int   @default(0)
+
+  // Ops
+  status      String @default("Active") // Active | Pending | Sold   (My Listings tabs)
+  adminStatus String @default("Active") // Active | Pending | Disabled (Admin listings)
+  views       Int    @default(0)
+  saves       Int    @default(0)
+
+  ownerId String?
+  owner   User?   @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  favorites Favorite[]
+  viewings  Viewing[]
+
+  @@index([listingType])
+  @@index([ownerId])
+}
+
+// ─── Favorites (saved properties) ────────────────────────────────────────────
+model Favorite {
+  id         String   @id @default(cuid())
+  userId     String
+  propertyId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, propertyId])
+  @@index([userId])
+}
+
+// ─── Subscription history ────────────────────────────────────────────────────
+model SubscriptionHistory {
+  id     String   @id @default(cuid())
+  userId String
+  plan   String
+  amount Int
+  date   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─── Transactions (subscription/premium/boost purchases — admin revenue) ─────
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String?
+  reference String   @unique
+  customer  String   @default("")
+  plan      String   @default("")
+  amount    Int
+  status    String   @default("Successful") // Successful | Pending | Failed
+  channel   String   @default("Paystack")
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// ─── Forum (group chat) ──────────────────────────────────────────────────────
+model ForumMessage {
+  id        String   @id @default(cuid())
+  userId    String?
+  sender    String
+  text      String
+  avatar    String   @default("")
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("inquiry") // inquiry|success|payment|message|subscription|viewing
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─── Payments (rent payment ledger — PaymentsView) ───────────────────────────
+model Payment {
+  id         String   @id @default(cuid())
+  userId     String
+  tenantName String
+  property   String
+  amount     Int
+  status     String   @default("Paid") // Paid | Pending | Overdue | Partial
+  date       DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─── Viewings (booked property viewings) ─────────────────────────────────────
+model Viewing {
+  id         String   @id @default(cuid())
+  userId     String
+  propertyId String
+  fullName   String
+  phone      String
+  email      String   @default("")
+  date       String // YYYY-MM-DD (preferred date)
+  time       String // e.g. "10:00 AM"
+  message    String   @default("")
+  status     String   @default("Confirmed")
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

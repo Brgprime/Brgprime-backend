@@ -1,0 +1,49 @@
+{
+  "name": "brg-prime-backend",
+  "version": "1.0.0",
+  "description": "Backend API for BRG Prime — a Nigerian real-estate marketplace (shared by the BRG Prime mobile and web apps).",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev --name init",
+    "db:push": "prisma db push",
+    "db:seed": "node prisma/seed.js",
+    "db:reset": "prisma migrate reset --force",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "use:sqlite": "node scripts/set-provider.js sqlite",
+    "use:postgres": "node scripts/set-provider.js postgresql",
+    "setup": "prisma generate && prisma migrate dev --name init && node prisma/seed.js",
+    "build": "prisma generate && prisma migrate deploy",
+    "render-build": "npm ci && prisma generate && prisma migrate deploy"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1087.0",
+    "@aws-sdk/s3-request-presigner": "^3.1087.0",
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^2.2.0",
+    "resend": "^6.17.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}

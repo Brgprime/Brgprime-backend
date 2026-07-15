@@ -1,0 +1,58 @@
+# Render blueprint for the BRG Prime API.
+# Deploy: push this repo to GitHub, then in Render → New → Blueprint, pick the repo.
+# Fill the sync:false secrets in the Render dashboard (they are not stored in git).
+services:
+  - type: web
+    name: brg-prime-api
+    runtime: node
+    plan: free
+    region: frankfurt # closest free region to Nigeria; change if you prefer
+    buildCommand: npm ci && npx prisma generate && npx prisma migrate deploy
+    startCommand: node src/server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # --- Database (Neon) ---
+      - key: DATABASE_URL
+        sync: false
+      # --- Auth ---
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 30d
+      # --- URLs ---
+      - key: APP_URL
+        sync: false # e.g. https://brg-prime-api.onrender.com
+      - key: WEB_URL
+        sync: false # your deployed web app URL
+      - key: CORS_ORIGIN
+        sync: false # comma-separated allowed origins
+      # --- Email (Resend) ---
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: OTP_RETURN_IN_RESPONSE
+        value: "false"
+      # --- Payments (Paystack) ---
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_CALLBACK_URL
+        sync: false
+      # --- Uploads (Cloudflare R2) ---
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false

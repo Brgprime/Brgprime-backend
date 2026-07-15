@@ -1,0 +1,13 @@
+import { Router } from 'express';
+import { requireAuth } from '../middleware/auth.js';
+import * as ctrl from '../controllers/notification.controller.js';
+
+const router = Router();
+
+router.use(requireAuth);
+router.get('/', ctrl.listNotifications);
+router.get('/unread-count', ctrl.unreadCount);
+router.patch('/:id/read', ctrl.markRead);
+router.post('/read-all', ctrl.markAllRead);
+
+export default router;
