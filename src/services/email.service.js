@@ -34,17 +34,23 @@ const codeBlock = (code) =>
    </div>`;
 
 // Core send helper — uses Resend if configured, otherwise logs to console (dev).
+// Never throws: a delivery failure must not break registration / reset flows.
 async function send({ to, subject, html }) {
   if (!resend) {
     console.log(`\n📧  [DEV EMAIL — no RESEND_API_KEY set]\n   to: ${to}\n   subject: ${subject}\n`);
     return { delivered: false, dev: true };
   }
-  const { error } = await resend.emails.send({ from: env.emailFrom, to, subject, html });
-  if (error) {
-    console.error('Resend error:', error);
-    throw new Error('Failed to send email.');
+  try {
+    const { error } = await resend.emails.send({ from: env.emailFrom, to, subject, html });
+    if (error) {
+      console.error('Resend error:', error);
+      return { delivered: false, error };
+    }
+    return { delivered: true };
+  } catch (err) {
+    console.error('Resend threw:', err?.message || err);
+    return { delivered: false, error: err };
   }
-  return { delivered: true };
 }
 
 export function sendOtpEmail(to, name, code) {
