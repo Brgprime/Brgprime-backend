@@ -11,6 +11,7 @@ router.get('/overview', ctrl.overview);
 router.get('/users', ctrl.listUsers);
 router.get('/users/:id', ctrl.getUser);
 router.patch('/users/:id/status', ctrl.setUserStatus);
+router.patch('/users/:id/role', ctrl.setUserRole);
 
 router.get('/listings', ctrl.listListings);
 router.patch('/listings/:id', ctrl.updateListing);

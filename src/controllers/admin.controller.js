@@ -107,6 +107,19 @@ export const setUserStatus = asyncHandler(async (req, res) => {
   });
 });
 
+// PATCH /api/admin/users/:id/role — grant or revoke admin access.
+export const setUserRole = asyncHandler(async (req, res) => {
+  const role = req.body?.role === 'admin' ? 'admin' : 'user';
+  // Prevent an admin from removing their own admin access (avoid lockout).
+  if (req.params.id === req.user.id && role !== 'admin') {
+    throw ApiError.badRequest('You cannot remove your own admin access.');
+  }
+  const u = await prisma.user.update({ where: { id: req.params.id }, data: { role } });
+  return ok(res, publicUser(u), {
+    message: role === 'admin' ? 'User is now an admin.' : 'Admin access removed.',
+  });
+});
+
 // ── Listings management ──────────────────────────────────────────────────────
 const listingQuery = z.object({
   search: z.string().trim().optional(),
