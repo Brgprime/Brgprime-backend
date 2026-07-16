@@ -36,19 +36,13 @@ export const env = {
   paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY || '',
   paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL || 'http://localhost:5173/subscriptions',
 
-  // Uploads (Cloudflare R2)
-  r2: {
-    accountId: process.env.R2_ACCOUNT_ID || '',
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
-    bucket: process.env.R2_BUCKET || 'brg-prime',
-    publicUrl: (process.env.R2_PUBLIC_URL || '').replace(/\/$/, ''),
-  },
+  // Uploads (Cloudinary) — configured via CLOUDINARY_URL.
+  cloudinaryUrl: process.env.CLOUDINARY_URL || '',
 };
 
 // Feature availability flags (used to give clear errors when a key is missing).
 export const features = {
   email: !!env.resendApiKey,
   paystack: !!env.paystackSecretKey,
-  uploads: !!(env.r2.accountId && env.r2.accessKeyId && env.r2.secretAccessKey && env.r2.publicUrl),
+  uploads: !!env.cloudinaryUrl,
 };

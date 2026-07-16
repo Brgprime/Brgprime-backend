@@ -45,14 +45,6 @@ services:
         sync: false
       - key: PAYSTACK_CALLBACK_URL
         sync: false
-      # --- Uploads (Cloudflare R2) ---
-      - key: R2_ACCOUNT_ID
-        sync: false
-      - key: R2_ACCESS_KEY_ID
-        sync: false
-      - key: R2_SECRET_ACCESS_KEY
-        sync: false
-      - key: R2_BUCKET
-        sync: false
-      - key: R2_PUBLIC_URL
+      # --- Uploads (Cloudinary) ---
+      - key: CLOUDINARY_URL
         sync: false

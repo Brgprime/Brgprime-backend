@@ -1,49 +1,33 @@
-import crypto from 'node:crypto';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { env, features } from '../config/env.js';
+import { v2 as cloudinary } from 'cloudinary';
+import { features } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 
-// Cloudflare R2 is S3-compatible — point the AWS SDK at the R2 endpoint.
-let client = null;
+// Cloudinary auto-configures from the CLOUDINARY_URL environment variable
+// (cloudinary://<api_key>:<api_secret>@<cloud_name>).
 if (features.uploads) {
-  client = new S3Client({
-    region: 'auto',
-    endpoint: `https://${env.r2.accountId}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: env.r2.accessKeyId,
-      secretAccessKey: env.r2.secretAccessKey,
-    },
-  });
+  cloudinary.config({ secure: true });
 }
 
-const EXT = {
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/avif': 'avif',
-};
-
-// Upload a single buffer to R2, returns the public URL.
-export async function uploadImage(file, { prefix = 'listings' } = {}) {
+// Upload a single image buffer to Cloudinary, returns the secure public URL.
+export function uploadImage(file, { prefix = 'listings' } = {}) {
   if (!features.uploads) {
-    throw new ApiError(503, 'Uploads are not configured. Set the R2_* environment variables.');
+    throw new ApiError(503, 'Uploads are not configured. Set CLOUDINARY_URL.');
   }
-  const ext = EXT[file.mimetype];
-  if (!ext) throw ApiError.badRequest('Unsupported image type. Use JPG, PNG, WEBP, GIF or AVIF.');
+  if (!file.mimetype?.startsWith('image/')) {
+    throw ApiError.badRequest('Only image files are allowed.');
+  }
 
-  const key = `${prefix}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
-
-  await client.send(
-    new PutObjectCommand({
-      Bucket: env.r2.bucket,
-      Key: key,
-      Body: file.buffer,
-      ContentType: file.mimetype,
-      CacheControl: 'public, max-age=31536000, immutable',
-    })
-  );
-
-  return `${env.r2.publicUrl}/${key}`;
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: `brg-prime/${prefix}`, resource_type: 'image' },
+      (err, result) => {
+        if (err || !result) {
+          reject(new ApiError(400, 'Image upload failed.'));
+        } else {
+          resolve(result.secure_url);
+        }
+      }
+    );
+    stream.end(file.buffer);
+  });
 }
