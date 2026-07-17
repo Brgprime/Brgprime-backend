@@ -1,6 +1,8 @@
+import http from 'node:http';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { prisma } from './config/prisma.js';
+import { initRealtime } from './realtime/forum.socket.js';
 
 async function start() {
   // Verify DB connectivity before accepting traffic.
@@ -13,9 +15,15 @@ async function start() {
   }
 
   const app = createApp();
-  const server = app.listen(env.port, () => {
+  const server = http.createServer(app);
+
+  // Attach the realtime (Socket.IO) layer for the live forum.
+  initRealtime(server);
+
+  server.listen(env.port, () => {
     console.log(`\n🏠  BRG Prime API running`);
     console.log(`    → http://localhost:${env.port}`);
+    console.log(`    → websocket: /socket.io`);
     console.log(`    → env: ${env.nodeEnv}\n`);
   });
 

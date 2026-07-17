@@ -3,6 +3,11 @@ import { prisma } from '../config/prisma.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { publicForumMessage } from '../utils/serialize.js';
 import { ok, created } from '../utils/respond.js';
+import { getIo } from '../realtime/io.js';
+import { socketMessage } from '../realtime/forum.socket.js';
+
+// Broadcast a message to all connected forum clients (if realtime is up).
+const broadcast = (m) => getIo()?.to('forum').emit('forum:message', socketMessage(m));
 
 export const postMessageSchema = z.object({
   text: z.string().trim().min(1, 'Message cannot be empty.').max(2000),
@@ -41,6 +46,8 @@ export const postMessage = asyncHandler(async (req, res) => {
     },
   });
 
+  broadcast(message);
+
   // Simulated reply from "Lagos Homes Realty" (matches frontend behaviour).
   const reply = await prisma.forumMessage.create({
     data: {
@@ -51,6 +58,7 @@ export const postMessage = asyncHandler(async (req, res) => {
       createdAt: new Date(Date.now() + 1000),
     },
   });
+  broadcast(reply);
 
   return created(res, {
     message: publicForumMessage(message, req.user.id),
