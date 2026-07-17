@@ -4,7 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { publicUser, publicProperty } from '../utils/serialize.js';
 import { ok } from '../utils/respond.js';
-import { getPlan } from '../config/plans.js';
+import { getPlan, subscriptionSnapshot } from '../config/plans.js';
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 export const overview = asyncHandler(async (_req, res) => {
@@ -88,14 +88,59 @@ export const listUsers = asyncHandler(async (req, res) => {
 export const getUser = asyncHandler(async (req, res) => {
   const u = await prisma.user.findUnique({
     where: { id: req.params.id },
-    include: { _count: { select: { properties: true, favorites: true } } },
+    include: {
+      _count: {
+        select: { properties: true, favorites: true, viewings: true, forumMessages: true },
+      },
+    },
   });
   if (!u) throw ApiError.notFound('User not found');
+
+  // Listing breakdown + financials + recent activity.
+  const [statusGroups, txns, history, recentListings] = await Promise.all([
+    prisma.property.groupBy({
+      by: ['adminStatus'],
+      where: { ownerId: u.id },
+      _count: true,
+    }),
+    prisma.transaction.findMany({ where: { userId: u.id, status: 'Successful' } }),
+    prisma.subscriptionHistory.findMany({
+      where: { userId: u.id },
+      orderBy: { date: 'desc' },
+      take: 10,
+    }),
+    prisma.property.findMany({
+      where: { ownerId: u.id },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { id: true, title: true, price: true, adminStatus: true, createdAt: true },
+    }),
+  ]);
+
+  const listingStatus = { Active: 0, Pending: 0, Disabled: 0 };
+  statusGroups.forEach((g) => { listingStatus[g.adminStatus] = g._count; });
+  const totalSpent = txns.reduce((s, t) => s + t.amount, 0);
+  const snap = subscriptionSnapshot(u);
+
   return ok(res, {
     ...publicUser(u),
-    listings: u._count.properties,
-    saved: u._count.favorites,
     plan: getPlan(u.planId).name,
+    listings: u._count.properties,
+    listingStatus,
+    saved: u._count.favorites,
+    viewings: u._count.viewings,
+    forumMessages: u._count.forumMessages,
+    totalSpent,
+    transactionsCount: txns.length,
+    premiumUsed: snap.premiumUsed,
+    premiumLimit: snap.premiumLimit,
+    boostsUsed: snap.boostsUsed,
+    boostLimit: snap.boostLimit,
+    renewsAt: snap.renewsAt,
+    subscriptionHistory: history.map((h) => ({ plan: h.plan, amount: h.amount, date: h.date })),
+    recentListings: recentListings.map((p) => ({
+      id: p.id, title: p.title, price: p.price, status: p.adminStatus, createdAt: p.createdAt,
+    })),
   });
 });
 
