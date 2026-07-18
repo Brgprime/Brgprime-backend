@@ -13,11 +13,25 @@ import { activatePlan } from '../services/subscription.service.js';
 export const initializeSchema = z.object({
   planId: z.enum(['silver', 'bronze', 'gold']), // free never needs payment
   billing: z.enum(['monthly', 'annual']).optional().default('monthly'),
+  // Where Paystack should send the browser after checkout. Mobile passes its
+  // own deep link so the user lands back in the app, not in the web app.
+  callbackUrl: z.string().url().optional(),
 });
+
+// A client-supplied callback must match an allowlisted prefix — otherwise a
+// stolen token could be used to bounce a real payment to an attacker's page.
+function resolveCallbackUrl(requested) {
+  if (!requested) return env.paystackCallbackUrl;
+  const allowed = [env.webUrl, env.paystackCallbackUrl, ...env.paystackAllowedCallbacks];
+  if (!allowed.some((prefix) => requested.startsWith(prefix))) {
+    throw ApiError.badRequest('callbackUrl is not an allowed return address.');
+  }
+  return requested;
+}
 
 // POST /api/payments/paystack/initialize — start a subscription checkout.
 export const initialize = asyncHandler(async (req, res) => {
-  const { planId, billing } = req.body;
+  const { planId, billing, callbackUrl } = req.body;
   const plan = getPlan(planId);
   const amountNaira = plan.price * (billing === 'annual' ? 12 : 1);
   const reference = `BRG-${req.user.id.slice(-6)}-${Date.now()}`;
@@ -26,6 +40,7 @@ export const initialize = asyncHandler(async (req, res) => {
     email: req.user.email,
     amountKobo: amountNaira * 100,
     reference,
+    callbackUrl: resolveCallbackUrl(callbackUrl),
     metadata: { userId: req.user.id, planId, billing, custom_fields: [] },
   });
 

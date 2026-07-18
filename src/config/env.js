@@ -36,6 +36,13 @@ export const env = {
   paystackSecretKey: process.env.PAYSTACK_SECRET_KEY || '',
   paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY || '',
   paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL || 'http://localhost:5173/subscriptions',
+  // Prefixes a client may pass as its own `callbackUrl` on initialize, so the
+  // mobile app can be returned to its own deep link instead of the web app.
+  // Comma-separated, e.g. "brgprime://,exp://,https://brgprime.com".
+  paystackAllowedCallbacks: (process.env.PAYSTACK_ALLOWED_CALLBACKS || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean),
 
   // Uploads (Cloudinary) — configured via CLOUDINARY_URL.
   cloudinaryUrl: process.env.CLOUDINARY_URL || '',

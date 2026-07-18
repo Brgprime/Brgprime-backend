@@ -15,7 +15,7 @@ function authHeaders() {
 }
 
 // Initialize a transaction. amountKobo = NGN * 100.
-export async function initializeTransaction({ email, amountKobo, reference, metadata }) {
+export async function initializeTransaction({ email, amountKobo, reference, metadata, callbackUrl }) {
   const res = await fetch(`${BASE}/transaction/initialize`, {
     method: 'POST',
     headers: authHeaders(),
@@ -24,7 +24,7 @@ export async function initializeTransaction({ email, amountKobo, reference, meta
       amount: amountKobo,
       reference,
       currency: 'NGN',
-      callback_url: env.paystackCallbackUrl,
+      callback_url: callbackUrl || env.paystackCallbackUrl,
       metadata,
     }),
   });

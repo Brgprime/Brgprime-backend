@@ -44,7 +44,9 @@ services:
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
       - key: PAYSTACK_CALLBACK_URL
-        sync: false
+        sync: false # production web subscriptions URL (NOT the netlify preview)
+      - key: PAYSTACK_ALLOWED_CALLBACKS
+        sync: false # mobile deep-link scheme(s), comma-separated
       # --- Uploads (Cloudinary) ---
       - key: CLOUDINARY_URL
         sync: false
