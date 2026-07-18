@@ -18,12 +18,40 @@ export const initializeSchema = z.object({
   callbackUrl: z.string().url().optional(),
 });
 
-// A client-supplied callback must match an allowlisted prefix — otherwise a
+// A client-supplied callback must be on an allowlisted origin — otherwise a
 // stolen token could be used to bounce a real payment to an attacker's page.
+//
+// Compare parsed origins, never string prefixes: "https://brgprime.com" is a
+// prefix of "https://brgprime.com.evil.example", so a startsWith() check hands
+// an attacker the redirect.
+function isAllowedCallback(requested) {
+  let url;
+  try {
+    url = new URL(requested);
+  } catch {
+    return false;
+  }
+
+  return [env.webUrl, env.paystackCallbackUrl, ...env.paystackAllowedCallbacks]
+    .some((entry) => {
+      // Scheme-only entry (e.g. "brgprime://") — a mobile deep link.
+      const schemeOnly = /^[a-z][a-z0-9+.-]*:\/*$/i.exec(entry);
+      if (schemeOnly) return url.protocol === `${entry.replace(/\/*$/, '')}`;
+
+      try {
+        const allowed = new URL(entry);
+        // Custom schemes parse with origin "null", so fall back to protocol
+        // plus host, which is what actually identifies the destination.
+        return url.protocol === allowed.protocol && url.host === allowed.host;
+      } catch {
+        return false;
+      }
+    });
+}
+
 function resolveCallbackUrl(requested) {
   if (!requested) return env.paystackCallbackUrl;
-  const allowed = [env.webUrl, env.paystackCallbackUrl, ...env.paystackAllowedCallbacks];
-  if (!allowed.some((prefix) => requested.startsWith(prefix))) {
+  if (!isAllowedCallback(requested)) {
     throw ApiError.badRequest('callbackUrl is not an allowed return address.');
   }
   return requested;
