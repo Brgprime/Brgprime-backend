@@ -3,6 +3,10 @@ import { env, features } from '../config/env.js';
 
 const resend = features.email ? new Resend(env.resendApiKey) : null;
 
+// Footer contact address, taken from EMAIL_FROM ("Name <addr>" or a bare
+// address) so it can never drift from the domain we actually send as.
+const contactAddress = env.emailFrom.match(/<([^>]+)>/)?.[1] ?? env.emailFrom;
+
 // Brand-styled wrapper for all transactional emails.
 function layout(title, bodyHtml) {
   return `<!doctype html>
@@ -19,7 +23,7 @@ function layout(title, bodyHtml) {
             ${bodyHtml}
           </td></tr>
           <tr><td style="padding:20px 32px;border-top:1px solid #EEF2FA;color:#9AA3BB;font-size:12px;">
-            BRG Prime — Buy. Sell. Rent. Lease.<br/>Plot 760, Victoria Island, Lagos · support@brgprime.ng
+            BRG Prime — Buy. Sell. Rent. Lease.<br/>Plot 760, Victoria Island, Lagos · ${contactAddress}
           </td></tr>
         </table>
       </td></tr>
