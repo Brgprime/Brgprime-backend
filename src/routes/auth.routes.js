@@ -15,6 +15,7 @@ router.post('/resend-otp', validate(resendOtpSchema), ctrl.resendOtp);
 router.post('/login', validate(loginSchema), ctrl.login);
 router.post('/forgot-password', validate(forgotPasswordSchema), ctrl.forgotPassword);
 router.post('/reset-password', validate(resetPasswordSchema), ctrl.resetPassword);
+router.post('/refresh', ctrl.refresh);
 router.get('/me', requireAuth, ctrl.me);
 
 export default router;

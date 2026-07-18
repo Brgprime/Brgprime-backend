@@ -3,7 +3,7 @@ import { prisma } from '../config/prisma.js';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { signToken } from '../utils/jwt.js';
+import { signToken, signRefreshToken, verifyToken } from '../utils/jwt.js';
 import { publicUser } from '../utils/serialize.js';
 import { ok, created } from '../utils/respond.js';
 import { features } from '../config/env.js';
@@ -20,6 +20,17 @@ const exposeCode = (code) =>
 function tokenFor(user) {
   return signToken({ sub: user.id, role: user.role });
 }
+
+function refreshFor(user) {
+  return signRefreshToken({ sub: user.id });
+}
+
+// Standard auth payload returned on login / verify / reset / refresh.
+const session = (user) => ({
+  token: tokenFor(user),
+  refreshToken: refreshFor(user),
+  user: publicUser(user),
+});
 
 // POST /api/auth/register
 // Creates the account (unverified), issues an OTP for the verification step.
@@ -71,9 +82,7 @@ export const verifyOtp = asyncHandler(async (req, res) => {
 
   sendWelcomeEmail(updated.email, updated.name);
 
-  return ok(res, { token: tokenFor(updated), user: publicUser(updated) }, {
-    message: 'Account verified.',
-  });
+  return ok(res, session(updated), { message: 'Account verified.' });
 });
 
 // POST /api/auth/resend-otp
@@ -104,7 +113,7 @@ export const login = asyncHandler(async (req, res) => {
   if (!match) throw ApiError.unauthorized('Invalid email or password.');
   if (user.status === 'disabled') throw ApiError.forbidden('This account has been disabled.');
 
-  return ok(res, { token: tokenFor(user), user: publicUser(user) }, { message: 'Signed in.' });
+  return ok(res, session(user), { message: 'Signed in.' });
 });
 
 // POST /api/auth/forgot-password
@@ -144,12 +153,31 @@ export const resetPassword = asyncHandler(async (req, res) => {
   });
 
   // Log them straight in after a successful reset.
-  return ok(res, { token: tokenFor(updated), user: publicUser(updated) }, {
-    message: 'Password reset successfully.',
-  });
+  return ok(res, session(updated), { message: 'Password reset successfully.' });
 });
 
 // GET /api/auth/me
 export const me = asyncHandler(async (req, res) => {
   return ok(res, { user: publicUser(req.user) });
+});
+
+// POST /api/auth/refresh — exchange a refresh token for a fresh session.
+export const refresh = asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) throw ApiError.unauthorized('Missing refresh token.');
+
+  let payload;
+  try {
+    payload = verifyToken(refreshToken);
+  } catch {
+    throw ApiError.unauthorized('Invalid or expired refresh token.');
+  }
+  if (payload.type !== 'refresh') throw ApiError.unauthorized('Invalid refresh token.');
+
+  const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+  if (!user) throw ApiError.unauthorized('User no longer exists.');
+  if (user.status === 'disabled') throw ApiError.forbidden('This account has been disabled.');
+
+  // Rotate: issue a fresh access token AND a fresh refresh token.
+  return ok(res, session(user), { message: 'Session refreshed.' });
 });

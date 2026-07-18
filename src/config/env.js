@@ -25,6 +25,7 @@ export const env = {
 
   jwtSecret: required('JWT_SECRET', process.env.JWT_SECRET) || 'dev-insecure-secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30d',
+  jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '180d',
   otpReturnInResponse: (process.env.OTP_RETURN_IN_RESPONSE || 'true') === 'true',
 
   // Email (Resend)
