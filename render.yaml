@@ -50,3 +50,8 @@ services:
       # --- Uploads (Cloudinary) ---
       - key: CLOUDINARY_URL
         sync: false
+      # --- BuildQ AI ---
+      - key: ANTHROPIC_API_KEY
+        sync: false # console.anthropic.com → API keys
+      - key: BUILDQ_WEB_URL
+        sync: false # https://brgprime.com/boq  (include the /boq prefix)

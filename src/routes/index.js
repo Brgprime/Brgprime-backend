@@ -12,6 +12,10 @@ import metaRoutes from './meta.routes.js';
 import adminRoutes from './admin.routes.js';
 import uploadRoutes from './upload.routes.js';
 
+// BuildQ AI — a separate product that shares this deployment and database.
+// It owns everything under /api/buildq and nothing outside src/modules/buildq.
+import buildqRoutes from '../modules/buildq/index.js';
+
 const router = Router();
 
 // API index / self-documentation.
@@ -48,5 +52,6 @@ router.use('/viewings', viewingRoutes);
 router.use('/meta', metaRoutes);
 router.use('/admin', adminRoutes);
 router.use('/uploads', uploadRoutes);
+router.use('/buildq', buildqRoutes);
 
 export default router;

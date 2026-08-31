@@ -1,0 +1,315 @@
+import { prisma } from '../../../config/prisma.js';
+import { asyncHandler } from '../../../utils/asyncHandler.js';
+import { BuildqError } from '../lib/errors.js';
+import { serializeDocument, serializeBoqRevision, serializeMeasurement } from '../lib/serializers.js';
+import { recordActivity } from '../middleware/scope.js';
+import { generateBoq } from '../services/analysis.service.js';
+import { runJobNow } from '../services/queue.service.js';
+import { createRevision, currentItems } from '../services/boq.service.js';
+import {
+  uploadDocument,
+  extensionOf,
+  kindOf,
+  isDrawing,
+  isAnalysable,
+} from '../services/storage.service.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two endpoints from §12 that the frontend's services/analysis.js calls,
+// plus the async equivalents used inside the app.
+//
+// Note the confidence scales, which the spec defines twice and differently:
+//   §12 (this engine contract)  0–1, omitted when not measured
+//   §6  (the app's BOQ item)    0–100, or null
+// These endpoints speak §12. /projects/:id/boq speaks §6. The database stores
+// 0–1 and the serializer converts, so the two never disagree.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Shapes an analysis job result into exactly the §12 /analyze response.
+function engineShape(document, result) {
+  return {
+    documentId: document.id,
+    scale: result?.scale ?? null,
+    pages: result?.pages ?? document.pageCount ?? 0,
+    elements: (result?.elements || []).map((e) => ({
+      type: e.type,
+      ...(e.count !== null && e.count !== undefined ? { count: e.count } : {}),
+      ...(e.length !== null && e.length !== undefined ? { length: e.length } : {}),
+      ...(e.area !== null && e.area !== undefined ? { area: e.area } : {}),
+      ...(e.volume !== null && e.volume !== undefined ? { volume: e.volume } : {}),
+      ...(e.unit ? { unit: e.unit } : {}),
+    })),
+    measurements: (result?.measurements || [])
+      .filter((m) => !m.conventionClash)
+      .map((m) => ({
+        name: m.name,
+        type: m.type,
+        value: m.value,
+        unit: m.unit,
+        // Omitted entirely, not null, when nothing measured it.
+        ...(m.confidence === null || m.confidence === undefined ? {} : { confidence: m.confidence }),
+      })),
+    warnings: result?.warnings || [],
+  };
+}
+
+// POST /analyze — the frontend's seam. Uploads, analyses and answers in one
+// call, because services/analysis.js expects the result directly. The async
+// path (upload → job → poll) is what the app itself uses.
+export const analyze = asyncHandler(async (req, res) => {
+  if (!req.file) throw BuildqError.badRequest('Attach a drawing.', { file: 'Required.' });
+
+  const projectKey = req.body?.projectId;
+  if (!projectKey) throw BuildqError.badRequest('projectId is required.', { projectId: 'Required.' });
+
+  const project = await prisma.buildqProject.findFirst({
+    where: { orgId: req.buildqUser.orgId, OR: [{ code: projectKey }, { id: projectKey }] },
+  });
+  if (!project) throw BuildqError.notFound('That project does not exist.', 'project_not_found');
+
+  const ext = extensionOf(req.file.originalname);
+  const kind = kindOf(ext);
+
+  if (!isDrawing(kind) || !isAnalysable(ext)) {
+    throw BuildqError.badRequest(
+      `.${ext} files cannot be read by the analysis engine. PDF, PNG, JPG and DXF are supported; DWG, RVT and IFC need a converter this service does not run.`,
+      undefined,
+      'unsupported_for_analysis'
+    );
+  }
+
+  const { storageKey, storageUrl, bytes } = await uploadDocument(req.file, {
+    orgId: req.buildqUser.orgId,
+  });
+
+  const document = await prisma.buildqDocument.create({
+    data: {
+      orgId: req.buildqUser.orgId,
+      projectId: project.id,
+      name: req.file.originalname,
+      ext,
+      kind,
+      sizeBytes: bytes ?? req.file.size ?? 0,
+      mime: req.file.mimetype || '',
+      storageKey,
+      storageUrl,
+      uploadedById: req.buildqUser.id,
+      status: 'Analyzing',
+    },
+  });
+
+  const job = await prisma.buildqAnalysisJob.create({
+    data: { documentId: document.id, status: 'queued' },
+  });
+
+  const outcome = await runJobNow(job.id);
+  if (!outcome.ok) {
+    throw BuildqError.unavailable(
+      `The drawing could not be analysed: ${outcome.error}`,
+      'analysis_failed'
+    );
+  }
+
+  const finished = await prisma.buildqAnalysisJob.findUnique({ where: { id: job.id } });
+  const fresh = await prisma.buildqDocument.findUnique({ where: { id: document.id } });
+
+  res.json(engineShape(fresh, finished.result));
+});
+
+// GET /analyze/:jobId
+export const jobStatus = asyncHandler(async (req, res) => {
+  const job = await prisma.buildqAnalysisJob.findFirst({
+    where: { id: req.params.jobId, document: { orgId: req.buildqUser.orgId } },
+    include: { document: true },
+  });
+  if (!job) throw BuildqError.notFound('That analysis job does not exist.', 'job_not_found');
+
+  res.json({
+    id: job.id,
+    status: job.status,
+    attempts: job.attempts,
+    error: job.error,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    document: serializeDocument(job.document),
+    ...(job.status === 'succeeded' ? engineShape(job.document, job.result) : {}),
+  });
+});
+
+// POST /documents/:documentId/detect — takeoff "Auto-detect all".
+export const detect = asyncHandler(async (req, res) => {
+  const document = req.document;
+
+  if (!isDrawing(document.kind) || !isAnalysable(document.ext)) {
+    throw BuildqError.badRequest(
+      `.${document.ext} files cannot be read by the analysis engine.`,
+      undefined,
+      'unsupported_for_analysis'
+    );
+  }
+
+  const job = await prisma.buildqAnalysisJob.create({
+    data: { documentId: document.id, status: 'queued' },
+  });
+  await prisma.buildqDocument.update({
+    where: { id: document.id },
+    data: { status: 'Analyzing' },
+  });
+
+  const outcome = await runJobNow(job.id);
+  if (!outcome.ok) {
+    throw BuildqError.unavailable(`Detection failed: ${outcome.error}`, 'analysis_failed');
+  }
+
+  const measurements = await prisma.buildqMeasurement.findMany({
+    where: { documentId: document.id },
+    include: { document: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  const finished = await prisma.buildqAnalysisJob.findUnique({ where: { id: job.id } });
+
+  res.json({
+    jobId: job.id,
+    measurements: measurements.map(serializeMeasurement),
+    warnings: finished.result?.warnings || [],
+    scale: finished.result?.scale ?? null,
+  });
+});
+
+// Gathers everything measured for a set of documents.
+async function gather(orgId, projectId, documentIds) {
+  const documents = await prisma.buildqDocument.findMany({
+    where: {
+      orgId,
+      projectId,
+      ...(documentIds?.length ? { id: { in: documentIds } } : {}),
+    },
+  });
+  if (!documents.length) {
+    throw BuildqError.badRequest(
+      'No drawings were found for this project.',
+      undefined,
+      'no_documents'
+    );
+  }
+
+  const ids = documents.map((d) => d.id);
+  const [measurements, elements] = await Promise.all([
+    prisma.buildqMeasurement.findMany({
+      where: { documentId: { in: ids } },
+      include: { document: true },
+    }),
+    prisma.buildqDetectedElement.findMany({ where: { documentId: { in: ids } } }),
+  ]);
+
+  return { documents, measurements, elements };
+}
+
+// POST /boq — the §12 engine contract: documents in, priced lines out.
+export const boqFromDocuments = asyncHandler(async (req, res) => {
+  const { projectId: projectKey, documentIds, region = 'Lagos' } = req.body || {};
+
+  const project = await prisma.buildqProject.findFirst({
+    where: { orgId: req.buildqUser.orgId, OR: [{ code: projectKey }, { id: projectKey }] },
+  });
+  if (!project) throw BuildqError.notFound('That project does not exist.', 'project_not_found');
+
+  const { documents, measurements, elements } = await gather(
+    req.buildqUser.orgId,
+    project.id,
+    documentIds
+  );
+
+  if (!measurements.length && !elements.length) {
+    return res.json({
+      items: [],
+      notes: [
+        {
+          type: 'warning',
+          text: 'None of the selected drawings have been analysed yet, so there is nothing to bill from.',
+        },
+      ],
+    });
+  }
+
+  const { items, notes } = await generateBoq({
+    documents,
+    measurements,
+    elements,
+    orgId: req.buildqUser.orgId,
+    region,
+  });
+
+  // §12 shape: 0–1 confidence, omitted when absent.
+  res.json({
+    items: items.map((i) => ({
+      desc: i.description,
+      section: i.section,
+      unit: i.unit,
+      qty: i.qty,
+      rate: i.rate,
+      ...(i.confidence === null || i.confidence === undefined ? {} : { confidence: i.confidence }),
+      sources: i.sources,
+    })),
+    notes,
+  });
+});
+
+// POST /projects/:projectId/boq/generate — same engine, but the result is
+// stored as a new revision so the bill has a history.
+export const generateForProject = asyncHandler(async (req, res) => {
+  const { documentIds, region = 'Lagos', standard = 'NIQS', replace = true } = req.body || {};
+
+  const { documents, measurements, elements } = await gather(
+    req.buildqUser.orgId,
+    req.project.id,
+    documentIds
+  );
+
+  if (!measurements.length && !elements.length) {
+    throw BuildqError.badRequest(
+      'None of these drawings have been analysed yet. Run analysis first.',
+      undefined,
+      'nothing_analysed'
+    );
+  }
+
+  const { items, notes } = await generateBoq({
+    documents,
+    measurements,
+    elements,
+    orgId: req.buildqUser.orgId,
+    region,
+  });
+
+  if (!items.length) {
+    throw BuildqError.unavailable(
+      'The engine could not produce any billable items from these drawings.',
+      'no_items_generated'
+    );
+  }
+
+  const existing = replace ? { items: [] } : await currentItems(req.project.id);
+  const revision = await createRevision(req.project.id, [...existing.items, ...items], {
+    source: 'engine',
+    standard,
+    region,
+    createdById: req.buildqUser.id,
+    generatedFrom: documents.map((d) => d.id),
+    notes,
+  });
+
+  await recordActivity({
+    orgId: req.buildqUser.orgId,
+    projectId: req.project.id,
+    action: 'generated BOQ from',
+    target: documents.map((d) => d.name).join(', ').slice(0, 120),
+    type: 'ai',
+  });
+
+  res.status(201).json({
+    revision: serializeBoqRevision(revision),
+    generated: items.length,
+    notes,
+  });
+});

@@ -12,19 +12,7 @@ export const majorCities = [
   'Kaduna', 'Benin City', 'Enugu', 'Calabar', 'Uyo', 'Warri', 'Owerri',
 ];
 
-const popularCities = [
-  { name: 'Lagos', count: 1240 },
-  { name: 'Abuja', count: 860 },
-  { name: 'Port Harcourt', count: 412 },
-  { name: 'Ibadan', count: 318 },
-  { name: 'Enugu', count: 244 },
-  { name: 'Benin City', count: 196 },
-  { name: 'Kano', count: 173 },
-  { name: 'Kaduna', count: 151 },
-];
-
-export const popularLocations = popularCities.map((c) => ({
-  name: c.name,
-  image: `https://picsum.photos/seed/${encodeURIComponent(c.name)}/300/200`,
-  count: c.count,
-}));
+// The popular-location carousel used to read a hardcoded count per city
+// (Lagos 1240, Abuja 860, …). Those were invented figures, and unused since
+// meta.controller computes the real ones from active listings — see
+// computePopularLocations(). Nothing here fabricates a number any more.

@@ -208,3 +208,616 @@ model Viewing {
 
   @@index([userId])
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BuildQ AI — AI quantity surveying platform.
+//
+// A SEPARATE product that shares this deployment, database and vendor accounts
+// (Neon, Render, Cloudinary, Resend, Paystack) with BRG Prime. It has its own
+// accounts, its own organizations and its own auth: nothing below relates to
+// the BRG Prime models above, and no BRG Prime model was modified to add these.
+//
+// Every table is mapped to a `buildq_` name so it can never collide with the
+// BRG Prime tables (`payments` and `notifications` already exist up there).
+// Money is naira; BigInt where a value can exceed ~2.1bn (Int would overflow).
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─── Organizations & people ──────────────────────────────────────────────────
+model BuildqOrganization {
+  id       String @id @default(cuid())
+  name     String
+  industry String @default("Construction")
+  country  String @default("Nigeria")
+  currency String @default("NGN")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         BuildqUser[]
+  invitations   BuildqTeamInvitation[]
+  subscription  BuildqSubscription?
+  payments      BuildqPayment[]
+  projects      BuildqProject[]
+  documents     BuildqDocument[]
+  rates         BuildqRate[]
+  costLines     BuildqCostLine[]
+  vendors       BuildqVendor[]
+  unlocks       BuildqVendorUnlock[]
+  savedPrices   BuildqSavedPrice[]
+  reports       BuildqReport[]
+  notifications BuildqNotification[]
+  activity      BuildqActivityEvent[]
+  threads       BuildqAssistantThread[]
+
+  @@map("buildq_organizations")
+}
+
+model BuildqUser {
+  id           String @id @default(cuid())
+  orgId        String
+  name         String
+  email        String @unique
+  passwordHash String
+  role         String @default("admin") // admin | qs | pm | client_viewer
+  phone        String @default("")
+  avatar       String @default("")
+  photoUrl     String @default("")
+
+  emailVerified Boolean @default(false)
+
+  // Set when this account was created by clicking through from BRG Prime.
+  // Nullable and unique: a direct BuildQ signup never has one, and a BRG Prime
+  // user maps to at most one BuildQ account.
+  brgUserId String? @unique
+
+  // Password reset — single-use token, hashed at rest.
+  resetTokenHash String?
+  resetExpiresAt DateTime?
+
+  // Bumped on logout / password change to invalidate outstanding refresh tokens.
+  tokenVersion Int @default(0)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  org               BuildqOrganization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  projectMembers    BuildqProjectMember[]
+  uploads           BuildqDocument[]
+  measurements      BuildqMeasurement[]
+  boqRevisions      BuildqBoqRevision[]
+  raisedVariations  BuildqVariation[]       @relation("BuildqVariationRaisedBy")
+  decidedVariations BuildqVariation[]       @relation("BuildqVariationDecidedBy")
+  notifications     BuildqNotification[]
+  activity          BuildqActivityEvent[]
+  threads           BuildqAssistantThread[]
+
+  @@index([orgId])
+  @@map("buildq_users")
+}
+
+model BuildqTeamInvitation {
+  id        String   @id @default(cuid())
+  orgId     String
+  email     String
+  name      String   @default("")
+  role      String   @default("qs")
+  tokenHash String   @unique
+  status    String   @default("pending") // pending | accepted | revoked | expired
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  org BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([email])
+  @@map("buildq_team_invitations")
+}
+
+// ─── Billing ─────────────────────────────────────────────────────────────────
+model BuildqSubscription {
+  id     String  @id @default(cuid())
+  orgId  String  @unique
+  status String  @default("trialing") // trialing | active | past_due | canceled | expired
+  plan   String?
+
+  trialStartedAt   DateTime  @default(now())
+  trialEndsAt      DateTime
+  currentPeriodEnd DateTime?
+  canceledAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("buildq_subscriptions")
+}
+
+model BuildqPayment {
+  id          String    @id @default(cuid())
+  orgId       String
+  reference   String    @unique
+  purpose     String // subscription | vendor_unlock | vendor_listing
+  amountNaira BigInt
+  status      String    @default("pending") // pending | success | failed
+  channel     String    @default("paystack")
+  paidAt      DateTime?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  org     BuildqOrganization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  unlocks BuildqVendorUnlock[]
+
+  @@index([orgId])
+  @@map("buildq_payments")
+}
+
+// ─── Projects ────────────────────────────────────────────────────────────────
+model BuildqProject {
+  id       String @id @default(cuid())
+  orgId    String
+  code     String @unique
+  name     String
+  client   String @default("")
+  location String @default("")
+  type     String @default("Residential")
+  status   String @default("Tender") // In Progress | Tender | Completed | On Hold
+  progress Int    @default(0)
+  budget   BigInt @default(0)
+  spent    BigInt @default(0)
+  currency String @default("NGN")
+  cover    String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org          BuildqOrganization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  members      BuildqProjectMember[]
+  documents    BuildqDocument[]
+  measurements BuildqMeasurement[]
+  boqRevisions BuildqBoqRevision[]
+  boqItems     BuildqBoqItem[]
+  variations   BuildqVariation[]
+  costLines    BuildqCostLine[]
+  reports      BuildqReport[]
+  activity     BuildqActivityEvent[]
+  threads      BuildqAssistantThread[]
+
+  @@index([orgId])
+  @@map("buildq_projects")
+}
+
+model BuildqProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      String   @default("qs")
+  createdAt DateTime @default(now())
+
+  project BuildqProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    BuildqUser    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("buildq_project_members")
+}
+
+// ─── Documents & analysis ────────────────────────────────────────────────────
+model BuildqDocument {
+  id        String @id @default(cuid())
+  orgId     String
+  projectId String? // null = an org-level "library" document, not tied to a project
+  name      String
+  ext       String @default("")
+  kind      String @default("Drawing") // Drawing | CAD | BIM | Image | Spreadsheet | Document | File
+  sizeBytes Int    @default(0)
+  mime      String @default("")
+
+  // Cloudinary public_id + delivery URL (same CLOUDINARY_URL as BRG Prime,
+  // different folder, resource_type "raw" so PDFs/CAD survive intact).
+  storageKey String
+  storageUrl String @default("")
+
+  uploadedById String?
+  uploadedAt   DateTime @default(now())
+
+  status        String  @default("Analyzing") // Analyzing | Ready | Failed
+  pageCount     Int?
+  detectedScale String?
+
+  project      BuildqProject?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  org          BuildqOrganization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  uploadedBy   BuildqUser?             @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  jobs         BuildqAnalysisJob[]
+  elements     BuildqDetectedElement[]
+  measurements BuildqMeasurement[]
+
+  @@index([projectId, kind])
+  @@index([orgId])
+  @@map("buildq_documents")
+}
+
+model BuildqAnalysisJob {
+  id         String    @id @default(cuid())
+  documentId String
+  status     String    @default("queued") // queued | running | succeeded | failed
+  attempts   Int       @default(0)
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?
+  result     Json?
+  createdAt  DateTime  @default(now())
+
+  document BuildqDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@index([status])
+  @@map("buildq_analysis_jobs")
+}
+
+model BuildqDetectedElement {
+  id         String  @id @default(cuid())
+  documentId String
+  type       String // wall | slab | column | beam | door | window | ...
+  count      Int?
+  length     Float?
+  area       Float?
+  volume     Float?
+  unit       String?
+  confidence Float?
+  geometry   Json?
+
+  document BuildqDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("buildq_detected_elements")
+}
+
+model BuildqMeasurement {
+  id         String  @id @default(cuid())
+  documentId String?
+  projectId  String
+  name       String
+  type       String // Linear | Area | Volume | Count
+  value      Float
+  unit       String
+  color      String  @default("#1CA5F6")
+  auto       Boolean @default(false)
+  confidence Float?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  document  BuildqDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  project   BuildqProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy BuildqUser?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([documentId])
+  @@map("buildq_measurements")
+}
+
+// ─── Bill of quantities ──────────────────────────────────────────────────────
+model BuildqBoqRevision {
+  id            String   @id @default(cuid())
+  projectId     String
+  version       Int
+  generatedFrom String[] // document ids the revision was generated from
+  source        String   @default("engine") // engine | stand-in | manual
+  standard      String   @default("NIQS")
+  region        String   @default("Lagos")
+  notes         Json?
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  project   BuildqProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy BuildqUser?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  items     BuildqBoqItem[]
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@map("buildq_boq_revisions")
+}
+
+model BuildqBoqItem {
+  id          String   @id @default(cuid())
+  revisionId  String
+  projectId   String
+  code        String   @default("")
+  description String
+  section     String   @default("")
+  unit        String
+  qty         Float    @default(0)
+  rate        Int      @default(0)
+  confidence  Float? // omitted when the quantity was not actually measured
+  sources     String[]
+  sortOrder   Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  revision BuildqBoqRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  project  BuildqProject     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([revisionId, sortOrder])
+  @@index([projectId])
+  @@map("buildq_boq_items")
+}
+
+model BuildqVariation {
+  id           String    @id @default(cuid())
+  projectId    String
+  code         String
+  title        String
+  description  String    @default("")
+  revisionFrom Int?
+  revisionTo   Int?
+  impactNaira  BigInt    @default(0)
+  status       String    @default("Pending") // Pending | Approved | Rejected
+  raisedById   String?
+  raisedAt     DateTime  @default(now())
+  decidedById  String?
+  decidedAt    DateTime?
+
+  project   BuildqProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  raisedBy  BuildqUser?   @relation("BuildqVariationRaisedBy", fields: [raisedById], references: [id], onDelete: SetNull)
+  decidedBy BuildqUser?   @relation("BuildqVariationDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, code])
+  @@index([projectId])
+  @@map("buildq_variations")
+}
+
+// ─── Pricing ─────────────────────────────────────────────────────────────────
+// orgId NULL = curated global market rate; orgId set = that firm own schedule.
+model BuildqRate {
+  id            String   @id @default(cuid())
+  orgId         String?
+  name          String
+  category      String   @default("Materials") // Materials | Labour | Equipment
+  unit          String
+  rateNaira     Int
+  region        String   @default("Lagos")
+  source        String   @default("Demo seed")
+  effectiveFrom DateTime @default(now())
+
+  // Every seeded rate is a DEMO figure, not a market price. Flagged so an
+  // administrator can find and replace the lot before production.
+  isDemo        Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org     BuildqOrganization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  history BuildqRateHistory[]
+
+  @@index([region, category])
+  @@index([orgId])
+  @@map("buildq_rates")
+}
+
+model BuildqRateHistory {
+  id         String   @id @default(cuid())
+  rateId     String
+  rateNaira  Int
+  recordedAt DateTime @default(now())
+
+  rate BuildqRate @relation(fields: [rateId], references: [id], onDelete: Cascade)
+
+  @@index([rateId, recordedAt])
+  @@map("buildq_rate_history")
+}
+
+model BuildqCostLine {
+  id         String   @id @default(cuid())
+  orgId      String
+  projectId  String?
+  item       String
+  unit       String
+  rate       Int      @default(0)
+  qty        Float    @default(0)
+  section    String   @default("")
+  sourceFile String   @default("")
+  uploadedAt DateTime @default(now())
+
+  org     BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project BuildqProject?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([projectId])
+  @@map("buildq_cost_lines")
+}
+
+// ─── Vendor marketplace ──────────────────────────────────────────────────────
+// phone/email/whatsapp are NEVER serialized unless the caller org has an
+// unlock — the stripping happens server-side, not in the client.
+model BuildqVendor {
+  id           String  @id @default(cuid())
+  name         String  @unique
+  category     String
+  location     String  @default("")
+  phone        String  @default("")
+  email        String  @default("")
+  whatsapp     String  @default("")
+  rating       Float   @default(0)
+  reviewsCount Int     @default(0)
+  years        Int     @default(0)
+  verified     Boolean @default(false)
+  unlockPrice  Int     @default(1000)
+  description  String  @default("")
+
+  ownerOrgId          String?
+  status              String  @default("Pending review") // Pending review | Active | Suspended
+  listingFeePaymentId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownerOrg    BuildqOrganization?   @relation(fields: [ownerOrgId], references: [id], onDelete: SetNull)
+  products    BuildqVendorProduct[]
+  unlocks     BuildqVendorUnlock[]
+  savedPrices BuildqSavedPrice[]
+
+  @@index([category])
+  @@map("buildq_vendors")
+}
+
+model BuildqVendorProduct {
+  id         String @id @default(cuid())
+  vendorId   String
+  name       String
+  unit       String
+  priceNaira Int
+
+  vendor BuildqVendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("buildq_vendor_products")
+}
+
+model BuildqVendorUnlock {
+  id         String   @id @default(cuid())
+  orgId      String
+  vendorId   String
+  paymentId  String?
+  unlockedAt DateTime @default(now())
+
+  org     BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  vendor  BuildqVendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  payment BuildqPayment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, vendorId])
+  @@index([orgId])
+  @@map("buildq_vendor_unlocks")
+}
+
+model BuildqSavedPrice {
+  id          String   @id @default(cuid())
+  orgId       String
+  vendorId    String
+  productName String
+  unit        String
+  rate        Int
+  savedAt     DateTime @default(now())
+
+  org    BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  vendor BuildqVendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("buildq_saved_prices")
+}
+
+// ─── Reporting, notifications, activity ──────────────────────────────────────
+model BuildqReport {
+  id          String   @id @default(cuid())
+  orgId       String
+  projectId   String?
+  name        String
+  type        String   @default("cost-summary")
+  format      String   @default("pdf")
+  storageKey  String   @default("")
+  storageUrl  String   @default("")
+  generatedAt DateTime @default(now())
+
+  org     BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project BuildqProject?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("buildq_reports")
+}
+
+model BuildqNotification {
+  id        String    @id @default(cuid())
+  orgId     String
+  userId    String?
+  title     String
+  detail    String    @default("")
+  type      String    @default("info")
+  link      String    @default("")
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  org  BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user BuildqUser?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([userId])
+  @@map("buildq_notifications")
+}
+
+model BuildqActivityEvent {
+  id        String   @id @default(cuid())
+  orgId     String
+  projectId String?
+  actorId   String?
+  action    String
+  target    String   @default("")
+  type      String   @default("info")
+  createdAt DateTime @default(now())
+
+  org     BuildqOrganization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project BuildqProject?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor   BuildqUser?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([projectId])
+  @@map("buildq_activity_events")
+}
+
+// ─── AI assistant ────────────────────────────────────────────────────────────
+model BuildqAssistantThread {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String?
+  projectId String?
+  title     String   @default("New conversation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org      BuildqOrganization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     BuildqUser?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project  BuildqProject?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  messages BuildqAssistantMessage[]
+
+  @@index([orgId])
+  @@index([userId])
+  @@map("buildq_assistant_threads")
+}
+
+model BuildqAssistantMessage {
+  id       String @id @default(cuid())
+  threadId String
+  role     String // user | assistant
+  content  String
+
+  inputTokens  Int?
+  outputTokens Int?
+  model        String?
+
+  createdAt DateTime @default(now())
+
+  thread BuildqAssistantThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@map("buildq_assistant_messages")
+}
+
+// ─── Regional pricing factors ────────────────────────────────────────────────
+// The frontend carries these as constants. They are DEMO figures, so they live
+// here as editable rows rather than compiled into estimation logic. A benchmark
+// is null until a real one exists — the engine never invents one.
+model BuildqRegion {
+  id              String  @id @default(cuid())
+  name            String  @unique // Lagos | Abuja | Port Harcourt | Kano
+  materialFactor  Float   @default(1)
+  labourFactor    Float   @default(1)
+  equipmentFactor Float   @default(1)
+  benchmarkNaira  BigInt?
+  isDemo          Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("buildq_regions")
+}

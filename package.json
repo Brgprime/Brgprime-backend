@@ -13,24 +13,22 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:push": "prisma db push",
-    "db:seed": "node prisma/seed.js",
     "db:reset": "prisma migrate reset --force",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "use:sqlite": "node scripts/set-provider.js sqlite",
     "use:postgres": "node scripts/set-provider.js postgresql",
-    "setup": "prisma generate && prisma migrate dev --name init && node prisma/seed.js",
+    "setup": "prisma generate && prisma migrate dev --name init",
     "build": "prisma generate && prisma migrate deploy",
     "render-build": "npm ci && prisma generate && prisma migrate deploy"
   },
-  "prisma": {
-    "seed": "node prisma/seed.js"
-  },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.10.0",
     "compression": "^1.7.4",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
