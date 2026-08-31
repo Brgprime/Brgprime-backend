@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { acceptInviteSchema, lookupInviteSchema } from '../validators/marketplace.validators.js';
 import * as payments from '../controllers/payment.controller.js';
 import * as team from '../controllers/team.controller.js';
+import * as documents from '../controllers/document.controller.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Endpoints that cannot require a session.
@@ -25,6 +26,11 @@ router.post('/payments/webhook', payments.webhook);
 // The same public key BRG Prime serves, so the two products cannot drift onto
 // different Paystack keys.
 router.get('/payments/paystack/config', payments.config);
+
+// Document bytes for <img> and <iframe>, which cannot send an Authorization
+// header. Public by route only: the ?t= file token names one document and
+// expires in five minutes, and the handler refuses anything else.
+router.get('/documents/:documentId/inline', documents.inlineBytes);
 
 // The invitee has no account yet, so this is how they get one.
 const acceptLimiter = rateLimit({

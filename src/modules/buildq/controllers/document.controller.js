@@ -11,7 +11,10 @@ import {
   kindOf,
   isDrawing,
   isAnalysable,
+  fetchBuffer,
 } from '../services/storage.service.js';
+import { signFileToken, verifyBuildqToken } from '../lib/jwt.js';
+import { buildqFeatures } from '../config.js';
 
 const withRelations = {
   project: true,
@@ -49,7 +52,10 @@ export const upload = asyncHandler(async (req, res) => {
       storageKey,
       storageUrl,
       uploadedById: req.buildqUser.id,
-      status: analysable ? 'Analyzing' : 'Ready',
+      // Only claim to be analysing when a worker can actually pick the job up.
+      // With no ANTHROPIC_API_KEY the queue never starts, and a document left
+      // on 'Analyzing' spins in the UI forever for work that will never run.
+      status: analysable ? (buildqFeatures.ai ? 'Analyzing' : 'Pending') : 'Ready',
     },
     include: withRelations,
   });
@@ -132,19 +138,59 @@ export const download = asyncHandler(async (req, res) => {
 // Images are their own preview. For everything else there is no server-side
 // renderer, so this reports that plainly rather than returning a broken link.
 export const preview = asyncHandler(async (req, res) => {
-  // Documents are stored under authenticated delivery, so even an image has to
-  // be signed — storageUrl on its own no longer resolves.
-  if (req.document.kind === 'Image') {
-    return res.json({ url: signedUrl(req.document.storageKey, { seconds: 300 }), kind: 'image' });
-  }
-  if (req.document.ext === 'pdf') {
-    return res.json({ url: signedUrl(req.document.storageKey, { seconds: 300 }), kind: 'pdf' });
-  }
+  // The bytes are streamed by /documents/:id/inline below rather than handing
+  // out a Cloudinary link: that link arrives as Content-Disposition: attachment
+  // and application/octet-stream, so a browser downloads it instead of showing
+  // it — which broke both the preview button and the in-page drawing viewers.
+  const inline = (kind) => {
+    const token = signFileToken({ documentId: req.document.id, orgId: req.document.orgId });
+    // Relative to the API root, not to a host: the client joins it onto
+    // whatever base it is configured with, so this keeps working if the API
+    // ever moves to its own origin.
+    return res.json({
+      url: `/documents/${req.document.id}/inline?t=${encodeURIComponent(token)}`,
+      kind,
+      relative: true,
+    });
+  };
+
+  if (req.document.kind === 'Image') return inline('image');
+  if (req.document.ext === 'pdf') return inline('pdf');
+
   res.json({
     url: null,
     kind: 'none',
     notice: `No preview is available for .${req.document.ext} files.`,
   });
+});
+
+// GET /documents/:documentId/inline?t=… — the bytes, rendered in place.
+//
+// Public by route, but useless without a file token that names this exact
+// document and expires in five minutes. <img> and <iframe> cannot send an
+// Authorization header, which is the whole reason this exists.
+export const inlineBytes = asyncHandler(async (req, res) => {
+  let payload;
+  try {
+    payload = verifyBuildqToken(String(req.query.t || ''), 'file');
+  } catch {
+    throw BuildqError.unauthorized('This preview link has expired. Reopen the document.', 'preview_expired');
+  }
+  if (payload.sub !== req.params.documentId) {
+    throw BuildqError.unauthorized('That preview link is not for this document.', 'preview_mismatch');
+  }
+
+  const document = await prisma.buildqDocument.findFirst({
+    where: { id: req.params.documentId, orgId: payload.org },
+  });
+  if (!document) throw BuildqError.notFound('That document does not exist.', 'document_not_found');
+
+  const buffer = await fetchBuffer(signedUrl(document.storageKey, { seconds: 120 }));
+
+  res.setHeader('Content-Type', document.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${document.name.replace(/"/g, '')}"`);
+  res.setHeader('Cache-Control', 'private, max-age=120');
+  res.send(buffer);
 });
 
 // PATCH /documents/:documentId — rename.

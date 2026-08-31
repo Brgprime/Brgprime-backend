@@ -29,6 +29,22 @@ export function signRefreshToken({ userId, tokenVersion }) {
   });
 }
 
+// A short-lived token that authorises reading ONE document's bytes inline.
+//
+// WHY: a preview has to be reachable from <img src> and <iframe src>, and
+// neither can carry an Authorization header. The refresh cookie is scoped to
+// /api/buildq/auth so it is not sent either. Rather than hand the browser a
+// Cloudinary URL — which arrives as Content-Disposition: attachment and so
+// downloads instead of rendering — the API streams the bytes itself, gated by
+// this token. It names one document, expires in five minutes, and cannot be
+// used as an access token because of its typ claim.
+export function signFileToken({ documentId, orgId }) {
+  return jwt.sign({ sub: documentId, org: orgId, typ: 'file' }, buildqEnv.jwtSecret, {
+    ...base,
+    expiresIn: '5m',
+  });
+}
+
 // Throws on an invalid/expired token, or one minted for the other product.
 export function verifyBuildqToken(token, expectedType = 'access') {
   const payload = jwt.verify(token, buildqEnv.jwtSecret, base);
