@@ -158,15 +158,37 @@ export const TRADE_UNITS = {
   light: 'no',
 };
 
+// Hyphens, en-dashes and repeated spaces are cosmetic here: a surveyor writing
+// "damp proof membrane" and a table keyed on "damp-proof membrane" mean the
+// same trade. Flatten both sides before comparing.
+const flatten = (text) =>
+  String(text || '')
+    .toLowerCase()
+    .replace(/[‐-―_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 // Returns the expected unit for a work-item description, or null when no
-// convention applies. Longest keyword wins so "damp-proof membrane" is not
-// matched by a shorter, wrong entry.
+// convention applies.
+//
+// The keyword that appears EARLIEST wins, not the longest one. A bill item is
+// written as the thing, then where it goes — "Damp proof membrane under lean
+// concrete" is a membrane, measured in m², not concrete measured in m³. Longest
+// keyword cannot tell an item from an incidental mention of another trade in
+// its location clause, and getting that backwards is not harmless: a flagged
+// measurement is dropped from the takeoff, so a correct quantity silently never
+// reaches the bill. That is exactly what happened to the membrane above on the
+// first real drawing this engine read.
 export function expectedUnitFor(description) {
-  const text = String(description || '').toLowerCase();
+  const text = flatten(description);
   let best = null;
   for (const [keyword, unit] of Object.entries(TRADE_UNITS)) {
-    if (text.includes(keyword) && (!best || keyword.length > best.keyword.length)) {
-      best = { keyword, unit };
+    const at = text.indexOf(flatten(keyword));
+    if (at === -1) continue;
+    // Earliest position wins; a longer keyword breaks a tie at the same spot
+    // ("site clearance" over a hypothetical "site").
+    if (!best || at < best.at || (at === best.at && keyword.length > best.keyword.length)) {
+      best = { keyword, unit, at };
     }
   }
   return best ? best.unit : null;
