@@ -17,18 +17,64 @@ import { sendAnalysisCompleteEmail } from './email.service.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const POLL_MS = Number(process.env.BUILDQ_QUEUE_POLL_MS || 5000);
-const MAX_ATTEMPTS = 3;
 // A stuck job (process died mid-run) is returned to the queue after this.
 const STALE_MS = 10 * 60 * 1000;
+
+// How long a failed attempt waits before it may be retried — one entry per
+// retry, and MAX_ATTEMPTS is derived from it so the two cannot drift apart.
+//
+// Retries used to fire back-to-back: a failed job went straight back to
+// 'queued' and the same tick re-claimed it immediately, spending all three
+// attempts inside a few seconds. That is no defence at all against the things
+// worth retrying — a 429 whose window clears in thirty seconds, or a brief
+// network fault — and it marked the drawing Failed while the cause was still
+// clearing.
+const RETRY_BACKOFF_MS = [30 * 1000, 5 * 60 * 1000];
+const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length + 1;
 
 let timer = null;
 let running = false;
 
+// Some failures will never come right on their own: a 400 (the request itself
+// is wrong, or the account is out of credit), a 401 (bad key), an unreadable
+// format. Retrying those twice more spends time and, where the call is billed,
+// money — to arrive at the same answer. Only 408/409/429 and 5xx are worth
+// another go.
+function isPermanent(err) {
+  const status = err?.status ?? err?.statusCode;
+  if (typeof status !== 'number') return false; // unknown cause — allow a retry
+  if (status === 408 || status === 409 || status === 429) return false;
+  if (status >= 500) return false;
+  return status >= 400;
+}
+
+// The SDK's message is the whole HTTP body — `400 {"type":"error","error":{...`.
+// That is now shown to the user on the drawing itself, so lift the sentence out
+// of it and leave the JSON behind.
+function readableError(err) {
+  const raw = err?.message || String(err);
+  const apiMessage = err?.error?.error?.message || err?.error?.message;
+  if (apiMessage) return String(apiMessage);
+  const match = raw.match(/"message":\s*"([^"]+)"/);
+  if (match) return match[1];
+  return raw;
+}
+
 // Takes exactly one queued job, or returns null. The updateMany count tells us
 // whether we won the race.
 async function claimNext() {
+  // A job that has already failed is not eligible again until its backoff has
+  // elapsed, measured from the attempt that failed. `attempts: 0` covers work
+  // that has never run; the generated branches cover each retry in turn, and a
+  // job at MAX_ATTEMPTS matches nothing and so is never picked up again.
+  const now = Date.now();
+  const readyToRetry = RETRY_BACKOFF_MS.map((waitMs, index) => ({
+    attempts: index + 1,
+    startedAt: { lt: new Date(now - waitMs) },
+  }));
+
   const candidate = await prisma.buildqAnalysisJob.findFirst({
-    where: { status: 'queued', attempts: { lt: MAX_ATTEMPTS } },
+    where: { status: 'queued', OR: [{ attempts: 0 }, ...readyToRetry] },
     orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
@@ -108,8 +154,8 @@ export async function runJob(job) {
 
     return { ok: true };
   } catch (err) {
-    const message = err?.message || String(err);
-    const exhausted = job.attempts >= MAX_ATTEMPTS;
+    const message = readableError(err);
+    const exhausted = job.attempts >= MAX_ATTEMPTS || isPermanent(err);
 
     await prisma.buildqAnalysisJob.update({
       where: { id: job.id },
