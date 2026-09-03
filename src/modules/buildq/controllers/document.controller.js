@@ -20,6 +20,8 @@ const withRelations = {
   project: true,
   uploadedBy: true,
   _count: { select: { elements: true } },
+  // The latest job only, so a failed read can say why it failed.
+  jobs: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true, error: true } },
 };
 
 // POST /projects/:projectId/documents — multipart upload.

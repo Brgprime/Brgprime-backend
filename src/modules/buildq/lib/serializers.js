@@ -87,6 +87,9 @@ export function serializeDocument(d) {
     // Real count of what the engine actually recognised — 0, not a fabricated
     // "8 + filename.length % 14".
     elements: d._count?.elements ?? d.elements?.length ?? 0,
+    // Why a "Failed" document failed. Without it the UI can only say "could not
+    // read this drawing" and leave the user with nowhere to go.
+    analysisError: d.jobs?.[0]?.status === 'failed' ? d.jobs[0].error || null : null,
   };
 }
 

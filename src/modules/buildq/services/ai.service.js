@@ -88,13 +88,36 @@ export function assertFits(buffer, name) {
 // Used wherever the shape of the answer matters — drawing analysis and BOQ
 // generation. The schema is enforced by the API, so a malformed reply is not
 // something the caller has to defend against.
+
+// zodOutputFormat() reads Zod v4 internals (`schema._zod`). Hand it a schema
+// built with the v3 entry point and it dies on `Cannot read properties of
+// undefined (reading 'def')` — which says nothing, and which is exactly what
+// silently failed every analysis and every BOQ generation until it was traced
+// back here. Schemas must be built from 'zod/v4'; this says so out loud.
+function outputFormat(schema) {
+  try {
+    return zodOutputFormat(schema);
+  } catch (err) {
+    if (!schema?._zod) {
+      throw BuildqError.unavailable(
+        'The analysis schema was built with the wrong Zod entry point. ' +
+          "Schemas passed to extract() must be built with `import { z } from 'zod/v4'`.",
+        'ai_schema_invalid'
+      );
+    }
+    throw err;
+  }
+}
+
 export async function extract({ system, content, schema, effort = 'high', maxTokens = 16000 }) {
+  const format = outputFormat(schema);
+
   const response = await getClient().messages.parse({
     model: buildqEnv.model,
     max_tokens: maxTokens,
     system,
     thinking: { type: 'adaptive' },
-    output_config: { format: zodOutputFormat(schema), effort },
+    output_config: { format, effort },
     messages: [{ role: 'user', content }],
   });
 

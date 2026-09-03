@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 import { prisma } from '../../../config/prisma.js';
 import { extract, pdfBlock, imageBlock, assertFits } from './ai.service.js';

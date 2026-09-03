@@ -39,7 +39,7 @@
     "multer": "^2.2.0",
     "resend": "^6.17.2",
     "socket.io": "^4.8.3",
-    "zod": "^3.23.8"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "prisma": "^5.22.0"
