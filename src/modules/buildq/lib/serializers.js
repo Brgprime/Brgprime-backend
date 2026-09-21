@@ -105,6 +105,10 @@ export function serializeBoqItem(i) {
     qty: i.qty,
     rate: i.rate,
     confidence: toPercentConfidence(i.confidence),
+    // read | counted | derived | assumed | manual, and the rule behind a
+    // quantity nothing measured. Null on bills generated before these existed.
+    basis: i.basis ?? null,
+    assumption: i.assumption ?? null,
     sources: i.sources || [],
   };
 }
@@ -177,6 +181,9 @@ export function serializeVariation(v) {
 // `change` is the % movement over 30 days, computed from rate_history. 0 means
 // "no earlier reading", not "no movement" — there is no way to distinguish them
 // in the frontend's shape, so `hasHistory` is included alongside.
+/** A rate older than this is reported as stale rather than quietly used (§9). */
+export const STALE_RATE_DAYS = 90;
+
 export function serializeRate(r, change = 0, hasHistory = false, changeSince = null) {
   if (!r) return null;
   return {
@@ -195,6 +202,12 @@ export function serializeRate(r, change = 0, hasHistory = false, changeSince = n
     isDemo: r.isDemo,
     scope: r.orgId ? 'organization' : 'global',
     effectiveFrom: iso(r.effectiveFrom),
+    // A rate nobody has re-surveyed in 90 days should not be priced off
+    // silently. In a market that moves 20-40% a year, an undated figure is
+    // worse than no figure at all.
+    stale: r.effectiveFrom
+      ? Date.now() - new Date(r.effectiveFrom).getTime() > STALE_RATE_DAYS * 24 * 60 * 60 * 1000
+      : true,
   };
 }
 

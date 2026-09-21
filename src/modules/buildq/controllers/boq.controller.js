@@ -69,7 +69,7 @@ export const revisions = asyncHandler(async (req, res) => {
 
 // POST /projects/:projectId/boq/items
 export const addItem = asyncHandler(async (req, res) => {
-  const { desc, section, unit, qty, rate, sources } = req.body;
+  const { desc, section, unit, qty, rate, sources, basis, assumption } = req.body;
   const normalized = normalizeUnit(unit);
 
   let revision = await currentRevision(req.project.id);
@@ -99,8 +99,14 @@ export const addItem = asyncHandler(async (req, res) => {
       unit: normalized,
       qty,
       rate,
-      // Entered by hand: there is nothing to be confident about.
+      // Nothing here carries a confidence. A typed figure has nothing to be
+      // confident about, and an accepted proposal was reviewed by a person
+      // rather than measured afresh — so the line records HOW it was arrived at
+      // and the rule behind it, which is checkable, instead of a score which is
+      // not.
       confidence: null,
+      basis: basis || 'manual',
+      assumption: basis && basis !== 'manual' ? assumption || null : null,
       sources,
       sortOrder: count,
     },
@@ -156,8 +162,11 @@ export const updateItem = asyncHandler(async (req, res) => {
       ...(qty !== undefined && { qty }),
       ...(rate !== undefined && { rate }),
       // Any hand edit invalidates a machine confidence — it is no longer the
-      // engine's figure.
-      ...(qty !== undefined || unit !== undefined ? { confidence: null } : {}),
+      // engine's figure, and neither its basis nor its assumption still
+      // describes the number that is now there.
+      ...(qty !== undefined || unit !== undefined
+        ? { confidence: null, basis: 'manual', assumption: null }
+        : {}),
     },
   });
 
@@ -248,7 +257,13 @@ export const exportBoq = asyncHandler(async (req, res) => {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
-  const header = ['Code', 'Description', 'Section', 'Unit', 'Qty', 'Rate', 'Amount', 'Confidence', 'Sources'];
+  // Basis and assumption travel with the export: a bill read in Excel has to
+  // carry the same warning the screen does, or the distinction is lost exactly
+  // where it matters most.
+  const header = [
+    'Code', 'Description', 'Section', 'Unit', 'Qty', 'Rate', 'Amount',
+    'Confidence', 'Basis', 'Assumption', 'Sources',
+  ];
   const lines = [header.join(',')];
   for (const i of items) {
     lines.push(
@@ -261,12 +276,14 @@ export const exportBoq = asyncHandler(async (req, res) => {
         i.rate,
         Math.round((i.qty || 0) * (i.rate || 0)),
         i.confidence === null ? '' : Math.round(i.confidence * 100),
+        esc(i.basis || ''),
+        esc(i.assumption || ''),
         esc((i.sources || []).join('; ')),
       ].join(',')
     );
   }
   const { total } = totals(items);
-  lines.push(['', 'TOTAL', '', '', '', '', total, '', ''].join(','));
+  lines.push(['', 'TOTAL', '', '', '', '', total, '', '', '', ''].join(','));
 
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${req.project.code}-boq.csv"`);

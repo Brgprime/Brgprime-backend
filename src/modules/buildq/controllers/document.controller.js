@@ -12,6 +12,7 @@ import {
   isDrawing,
   isAnalysable,
   fetchBuffer,
+  uploadLimits,
 } from '../services/storage.service.js';
 import { signFileToken, verifyBuildqToken } from '../lib/jwt.js';
 import { buildqFeatures } from '../config.js';
@@ -23,6 +24,16 @@ const withRelations = {
   // The latest job only, so a failed read can say why it failed.
   jobs: { orderBy: { createdAt: 'desc' }, take: 1, select: { status: true, error: true } },
 };
+
+// GET /uploads/config
+//
+// What the dropzone is allowed to promise. The client used to hard-code 25 MB
+// while the storage plan refused at 10, so a surveyor met the real limit only
+// as a failure, after the upload had run. One source of truth now, read at
+// runtime, so the two cannot drift again.
+export const limits = asyncHandler(async (_req, res) => {
+  res.json(uploadLimits());
+});
 
 // POST /projects/:projectId/documents — multipart upload.
 //

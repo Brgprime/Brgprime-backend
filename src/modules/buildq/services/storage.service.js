@@ -38,7 +38,45 @@ const ACCEPTED_EXT = new Set([
   'docx', 'doc',
 ]);
 
+// What this app is willing to accept.
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+// What the storage account will actually accept, which is the smaller number
+// and the one that decides. Cloudinary enforces a per-asset ceiling by PLAN —
+// 10 MB for raw files on the free tier — and it applies at their API, so it is
+// not something this service can upload its way around. A direct-from-browser
+// signed upload would not help: the same cap sits behind it.
+//
+// It used to be invisible. The dropzone promised 25 MB, the request was refused
+// at 10, and the refusal arrived as "Upload failed. Please try again." — so the
+// real ceiling could only be found by shrinking a drawing until it went
+// through, losing the raster detail the engine reads.
+//
+// Set BUILDQ_STORAGE_MAX_MB to whatever the account's plan allows. Raising the
+// plan without raising this changes nothing; raising this without raising the
+// plan just moves the same rejection back to Cloudinary.
+const PROVIDER_MAX_MB = Number(process.env.BUILDQ_STORAGE_MAX_MB || 10);
+
+/** The ceiling that actually applies. Advertise THIS, never MAX_FILE_BYTES. */
+export const EFFECTIVE_MAX_BYTES = Math.min(
+  MAX_FILE_BYTES,
+  Math.max(1, PROVIDER_MAX_MB) * 1024 * 1024
+);
+
+export const EFFECTIVE_MAX_MB = Math.floor(EFFECTIVE_MAX_BYTES / (1024 * 1024));
+
+/** What the dropzone should tell the user, so the two cannot drift apart. */
+export function uploadLimits() {
+  return {
+    maxBytes: EFFECTIVE_MAX_BYTES,
+    maxMb: EFFECTIVE_MAX_MB,
+    // True when the storage plan, not this app, is what caps uploads — the
+    // case where the fix is a billing decision rather than a code change.
+    cappedByProvider: EFFECTIVE_MAX_BYTES < MAX_FILE_BYTES,
+    appMaxMb: Math.floor(MAX_FILE_BYTES / (1024 * 1024)),
+    acceptedTypes: [...ACCEPTED_EXT].map((e) => `.${e}`).join(','),
+  };
+}
 
 // Documents are stored under authenticated delivery; avatars stay public
 // because they are rendered in ordinary <img> tags all over the app.
@@ -104,6 +142,17 @@ export function uploadDocument(file, { orgId }) {
     );
   }
 
+  // Refuse here rather than after pushing the bytes at a provider that will
+  // refuse them anyway. Same outcome, no wasted upload, and a message that
+  // names the real number.
+  if (file.size > EFFECTIVE_MAX_BYTES) {
+    throw BuildqError.badRequest(
+      `"${file.originalname}" is ${(file.size / (1024 * 1024)).toFixed(1)} MB. The file storage plan caps uploads at ${EFFECTIVE_MAX_MB} MB.`,
+      undefined,
+      'file_too_large'
+    );
+  }
+
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
@@ -120,7 +169,7 @@ export function uploadDocument(file, { orgId }) {
       },
       (err, result) => {
         if (err || !result) {
-          reject(BuildqError.badRequest('Upload failed. Please try again.', undefined, 'upload_failed'));
+          reject(uploadFailure(err, file));
         } else {
           resolve({ storageKey: result.public_id, storageUrl: result.secure_url, bytes: result.bytes });
         }
@@ -128,6 +177,50 @@ export function uploadDocument(file, { orgId }) {
     );
     stream.end(file.buffer);
   });
+}
+
+// Why an upload actually failed.
+//
+// This used to be a flat "Upload failed. Please try again." for every cause,
+// and retrying does not help when the file is simply too big — so a surveyor
+// met a 25 MB dropzone, was refused at 10 MB, and had to discover the real
+// ceiling by shrinking the file until it went through. Losing raster detail the
+// engine needs to read, to satisfy a limit nothing stated.
+//
+// The storage account's own per-file cap is what bites first: it sits BELOW the
+// 25 MB this service accepts, and neither this code nor the dropzone knows its
+// value until the provider objects. So we relay what the provider said.
+function uploadFailure(err, file) {
+  const message = String(err?.message || '');
+  const status = err?.http_code || err?.error?.http_code;
+
+  // e.g. "File size too large. Got 13421772. Maximum is 10485760."
+  const tooLarge = /file size too large|maximum is \d+/i.test(message);
+  if (tooLarge) {
+    const max = message.match(/maximum is (\d+)/i);
+    const cap = max ? `${(Number(max[1]) / (1024 * 1024)).toFixed(0)} MB` : 'a lower limit';
+    const got = file?.size ? ` "${file.originalname}" is ${(file.size / (1024 * 1024)).toFixed(1)} MB.` : '';
+    return BuildqError.badRequest(
+      `The file storage account caps uploads at ${cap}, which is below this app's ${Math.round(
+        MAX_FILE_BYTES / (1024 * 1024)
+      )} MB limit.${got} Raise the storage plan's per-file limit, or split the drawing set into separate sheets — shrinking the file costs the engine the detail it reads.`,
+      undefined,
+      'file_too_large'
+    );
+  }
+
+  if (status === 401 || status === 403) {
+    return BuildqError.unavailable(
+      'File storage rejected the credentials. Check CLOUDINARY_URL.',
+      'storage_unauthorized'
+    );
+  }
+
+  return BuildqError.badRequest(
+    message ? `Upload failed: ${message}` : 'Upload failed. Please try again.',
+    undefined,
+    'upload_failed'
+  );
 }
 
 // Avatars and other images.
@@ -142,7 +235,7 @@ export function uploadImage(file, { orgId, prefix = 'avatars' }) {
       { folder: `buildq/${orgId}/${prefix}`, resource_type: 'image' },
       (err, result) => {
         if (err || !result) {
-          reject(BuildqError.badRequest('Image upload failed.', undefined, 'upload_failed'));
+          reject(uploadFailure(err, file));
         } else {
           resolve({ storageKey: result.public_id, storageUrl: result.secure_url });
         }

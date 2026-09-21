@@ -4,6 +4,8 @@ import { BuildqError } from '../lib/errors.js';
 import { serializeRate } from '../lib/serializers.js';
 import { normalizeUnit } from '../lib/units.js';
 import { parseCsv, pick, parseMoney } from '../lib/csv.js';
+import { BILL_SKELETON } from '../lib/billing-rules.js';
+import { STALE_RATE_DAYS } from '../lib/serializers.js';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -232,4 +234,60 @@ export const importCsv = asyncHandler(async (req, res) => {
   }
 
   res.json({ imported, rejected, total: rows.length });
+});
+
+// GET /rates/coverage?region=
+//
+// Which of the items a bill is expected to contain this library can actually
+// price. Generation prices every item it bills, so an empty or partial library
+// does not fail loudly — it produces a bill full of zeros and a total that
+// looks like a discount. This says so in advance, per section, before anyone
+// runs a generation and reads the wrong number.
+export const coverage = asyncHandler(async (req, res) => {
+  const region = String(req.query.region || 'Lagos');
+  const orgId = req.buildqUser.orgId;
+
+  const rates = await prisma.buildqRate.findMany({
+    where: { region, OR: [{ orgId }, { orgId: null }] },
+    orderBy: { orgId: 'desc' },
+  });
+
+  const staleBefore = new Date(Date.now() - STALE_RATE_DAYS * 24 * 60 * 60 * 1000);
+  const names = rates.map((r) => r.name).join('\n');
+
+  const entries = BILL_SKELETON.map((entry) => {
+    const match = rates.find((r) => entry.match.test(r.name));
+    return {
+      key: entry.key,
+      section: entry.section,
+      label: entry.label,
+      unit: entry.unit,
+      priced: Boolean(match),
+      // A rate of the wrong dimension cannot price the item even though its
+      // name matches — the check that stops a length being priced per m².
+      unitMismatch: match ? match.unit !== entry.unit : false,
+      rateName: match?.name ?? null,
+      rate: match?.rateNaira ?? null,
+      effectiveFrom: match?.effectiveFrom ? match.effectiveFrom.toISOString() : null,
+      stale: match?.effectiveFrom ? match.effectiveFrom < staleBefore : false,
+      isDemo: match?.isDemo ?? false,
+      scope: match ? (match.orgId ? 'organization' : 'global') : null,
+    };
+  });
+
+  const priced = entries.filter((e) => e.priced && !e.unitMismatch);
+
+  res.json({
+    region,
+    total: entries.length,
+    priced: priced.length,
+    missing: entries.length - priced.length,
+    stale: priced.filter((e) => e.stale).length,
+    demo: priced.filter((e) => e.isDemo).length,
+    libraryEmpty: rates.length === 0,
+    // Ignore `names` beyond the match above; returned so a caller can see what
+    // the library actually holds when a lookup surprises them.
+    librarySize: rates.length,
+    items: entries,
+  });
 });

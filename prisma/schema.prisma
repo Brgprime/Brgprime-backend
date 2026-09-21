@@ -531,6 +531,17 @@ model BuildqBoqItem {
   qty         Float    @default(0)
   rate        Int      @default(0)
   confidence  Float? // omitted when the quantity was not actually measured
+
+  // How the quantity was arrived at: read | counted | derived | assumed | manual.
+  // A bill that only says "analysed" or "not analysed" cannot express the
+  // ordinary case where the drawings detail some work and not the rest — and an
+  // item the drawings never showed was previously dropped rather than assumed,
+  // which is how a roof carcass went missing from a finished-looking bill.
+  basis       String?
+  // The rule behind an `assumed` quantity, in the surveyor's own terms. What
+  // makes such a figure auditable instead of invented.
+  assumption  String?
+
   sources     String[]
   sortOrder   Int      @default(0)
 

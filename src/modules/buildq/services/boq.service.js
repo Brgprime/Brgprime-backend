@@ -66,6 +66,8 @@ export async function createRevision(projectId, items, meta = {}) {
           qty: i.qty,
           rate: i.rate,
           confidence: i.confidence ?? null,
+          basis: i.basis ?? null,
+          assumption: i.assumption ?? null,
           sources: i.sources || [],
           sortOrder: i.sortOrder,
         })),
@@ -162,6 +164,10 @@ export async function itemsFromMeasurements(measurements, { orgId, region = 'Lag
       // Carried straight through: a measured confidence stays, an entered one
       // has none, and we do not manufacture one for the rate.
       confidence: m.confidence ?? null,
+      // An auto-detected measurement was read off the sheet; one a surveyor
+      // added by hand was not.
+      basis: m.auto ? 'read' : 'manual',
+      assumption: null,
       sources: m.document?.name ? [m.document.name] : [],
     });
   }

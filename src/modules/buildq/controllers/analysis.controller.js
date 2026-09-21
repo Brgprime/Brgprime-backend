@@ -3,7 +3,7 @@ import { asyncHandler } from '../../../utils/asyncHandler.js';
 import { BuildqError } from '../lib/errors.js';
 import { serializeDocument, serializeBoqRevision, serializeMeasurement } from '../lib/serializers.js';
 import { recordActivity } from '../middleware/scope.js';
-import { generateBoq } from '../services/analysis.service.js';
+import { generateBoq, quantifyItem } from '../services/analysis.service.js';
 import { runJobNow } from '../services/queue.service.js';
 import { createRevision, currentItems } from '../services/boq.service.js';
 import {
@@ -274,7 +274,7 @@ export const generateForProject = asyncHandler(async (req, res) => {
     );
   }
 
-  const { items, notes } = await generateBoq({
+  const { items, notes, rates } = await generateBoq({
     documents,
     measurements,
     elements,
@@ -311,5 +311,59 @@ export const generateForProject = asyncHandler(async (req, res) => {
     revision: serializeBoqRevision(revision),
     generated: items.length,
     notes,
+    // What the prices are and when they were surveyed, so the screen can say
+    // "Lagos rates as at 1 Sep 2026" instead of showing a timeless total.
+    rates,
   });
+});
+
+// POST /projects/:projectId/boq/items/quantify
+//
+// Measure one described item off the drawings already analysed for this
+// project. Returns a proposal and stores nothing: the client shows the figure
+// and its workings, and only a surveyor who accepts it turns it into a bill
+// line through /boq/items. Adding a line by hand should not mean measuring it
+// by hand, but neither should a sentence write itself into a bill.
+export const quantifyForProject = asyncHandler(async (req, res) => {
+  const { desc, section = null, unit = null, documentIds, region = 'Lagos' } = req.body || {};
+
+  const { documents, measurements, elements } = await gather(
+    req.buildqUser.orgId,
+    req.project.id,
+    documentIds
+  );
+
+  if (!measurements.length && !elements.length) {
+    throw BuildqError.badRequest(
+      'None of this project\u2019s drawings have been analysed yet, so there is nothing to measure against. Run analysis first, or enter the quantity by hand.',
+      undefined,
+      'nothing_analysed'
+    );
+  }
+
+  const proposal = await quantifyItem({
+    description: desc,
+    section,
+    unit,
+    documents,
+    measurements,
+    elements,
+    orgId: req.buildqUser.orgId,
+    region,
+  });
+
+  await recordActivity({
+    orgId: req.buildqUser.orgId,
+    projectId: req.project.id,
+    actorId: req.buildqUser.id,
+    action: proposal.matched ? 'measured a described item' : 'could not measure a described item',
+    target: desc.slice(0, 120),
+    type: 'ai',
+  });
+
+  // 200 either way: "the drawings do not show that" is a real answer, not a
+  // failure, and the form needs to fall back to manual entry rather than show
+  // an error the surveyor has to dismiss.
+  const { usage, model, ...body } = proposal;
+  res.json(body);
 });

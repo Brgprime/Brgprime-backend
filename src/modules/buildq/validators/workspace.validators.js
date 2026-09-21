@@ -45,13 +45,38 @@ export const renameDocumentSchema = z.object({
 });
 
 // ─── BOQ ─────────────────────────────────────────────────────────────────────
-export const boqItemSchema = z.object({
-  desc: z.string().trim().min(1, 'Description is required.'),
-  section: z.string().trim().default(SECTION_ORDER[0]),
-  unit,
-  qty: z.number().positive('Quantity must be greater than zero.'),
-  rate: money.default(0),
-  sources: z.array(z.string()).default([]),
+export const boqItemSchema = z
+  .object({
+    desc: z.string().trim().min(1, 'Description is required.'),
+    section: z.string().trim().default(SECTION_ORDER[0]),
+    unit,
+    qty: z.number().positive('Quantity must be greater than zero.'),
+    rate: money.default(0),
+    sources: z.array(z.string()).default([]),
+    // A line added through the add-item form is `manual`. A line the surveyor
+    // accepted from a /quantify proposal is `derived` or `assumed`, and must
+    // carry the rule it rests on.
+    //
+    // `read` and `counted` are deliberately NOT accepted here. They assert that
+    // a figure came straight off a drawing, and only the engine is in a
+    // position to say that — otherwise a typed number could be dressed up as a
+    // measurement, which is the failure this whole module was built against.
+    basis: z.enum(['manual', 'derived', 'assumed']).default('manual'),
+    assumption: z.string().trim().max(2000).optional(),
+  })
+  .refine((v) => v.basis === 'manual' || Boolean(v.assumption), {
+    message: 'A derived or assumed quantity must state the rule it rests on.',
+    path: ['assumption'],
+  });
+
+// A description to be measured off the drawings. Unit and section are hints,
+// not instructions: the engine corrects a unit that breaks a §9 convention.
+export const quantifyBoqItemSchema = z.object({
+  desc: z.string().trim().min(3, 'Describe the work item.'),
+  section: z.string().trim().optional(),
+  unit: z.string().trim().optional(),
+  documentIds: z.array(z.string()).optional(),
+  region: z.string().trim().optional(),
 });
 
 export const updateBoqItemSchema = z

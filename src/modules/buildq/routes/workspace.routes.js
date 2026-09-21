@@ -4,7 +4,7 @@ import multer from 'multer';
 import { requireAuth, requireAccess, requirePermission } from '../middleware/auth.js';
 import { loadProject, loadDocument } from '../middleware/scope.js';
 import { validate } from '../middleware/validate.js';
-import { MAX_FILE_BYTES } from '../services/storage.service.js';
+import { EFFECTIVE_MAX_BYTES } from '../services/storage.service.js';
 
 import * as projects from '../controllers/project.controller.js';
 import * as documents from '../controllers/document.controller.js';
@@ -35,13 +35,19 @@ import {
 
 const router = Router();
 
-const uploadDoc = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } });
+const uploadDoc = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: EFFECTIVE_MAX_BYTES },
+});
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Everything below requires a signed-in user with a live trial or subscription.
 // requireAccess is the server-side paywall — §16 lists the client-side one as a
 // Critical hole because editing localStorage restores access.
 router.use(requireAuth, requireAccess);
+
+// What the dropzone may promise, read from the server rather than hard-coded.
+router.get('/uploads/config', documents.limits);
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 router.get('/projects', validate(listQuerySchema, 'query'), projects.list);
@@ -156,6 +162,8 @@ router.delete('/variations/:variationId', requirePermission('projects:write'), v
 
 // ─── Pricing database ────────────────────────────────────────────────────────
 router.get('/rates', validate(rateQuerySchema, 'query'), rates.list);
+// Declared before the :rateId routes so "coverage" is never read as an id.
+router.get('/rates/coverage', rates.coverage);
 router.post('/rates', requirePermission('rates:write'), validate(createRateSchema), rates.create);
 router.patch(
   '/rates/:rateId',
