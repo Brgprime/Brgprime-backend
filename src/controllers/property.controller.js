@@ -209,7 +209,7 @@ export const createProperty = asyncHandler(async (req, res) => {
         isVerified: false,
         isPremium,
         isBoosted,
-        agentName: 'You',
+        agentName: req.user.name,
         agentAvatar: req.user.avatarUrl,
         rating: 0,
         reviewCount: 0,

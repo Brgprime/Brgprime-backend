@@ -31,6 +31,15 @@ export const updateProfile = asyncHandler(async (req, res) => {
   if (avatar !== undefined) data.avatarUrl = avatar;
 
   const user = await prisma.user.update({ where: { id: req.user.id }, data });
+
+  // Listings carry a copy of the poster's name and avatar; keep them current.
+  if (data.name || data.avatarUrl !== undefined) {
+    await prisma.property.updateMany({
+      where: { ownerId: user.id },
+      data: { agentName: user.name, agentAvatar: user.avatarUrl },
+    });
+  }
+
   return ok(res, { user: publicUser(user) }, { message: 'Profile updated successfully!' });
 });
 
