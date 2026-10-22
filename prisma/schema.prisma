@@ -377,6 +377,7 @@ model BuildqProject {
   documents    BuildqDocument[]
   measurements BuildqMeasurement[]
   boqRevisions BuildqBoqRevision[]
+  boqRuns      BuildqBoqGeneration[]
   boqItems     BuildqBoqItem[]
   variations   BuildqVariation[]
   costLines    BuildqCostLine[]
@@ -518,6 +519,26 @@ model BuildqBoqRevision {
   @@unique([projectId, version])
   @@index([projectId])
   @@map("buildq_boq_revisions")
+}
+
+// One BOQ generation run. Generating takes longer than the web proxy will hold
+// a request open, so the POST answers at once with this row and the client
+// polls it until a revision lands or the run fails.
+model BuildqBoqGeneration {
+  id         String    @id @default(cuid())
+  projectId  String
+  status     String    @default("running") // running | succeeded | failed
+  error      String?
+  revisionId String?
+  generated  Int?
+  result     Json? // { notes, rates }
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  project BuildqProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("buildq_boq_generations")
 }
 
 model BuildqBoqItem {

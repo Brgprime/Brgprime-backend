@@ -1,10 +1,10 @@
 import { prisma } from '../../../config/prisma.js';
 import { asyncHandler } from '../../../utils/asyncHandler.js';
 import { BuildqError } from '../lib/errors.js';
-import { serializeDocument, serializeBoqRevision, serializeMeasurement } from '../lib/serializers.js';
+import { serializeDocument, serializeMeasurement } from '../lib/serializers.js';
 import { recordActivity } from '../middleware/scope.js';
 import { generateBoq, quantifyItem } from '../services/analysis.service.js';
-import { runJobNow } from '../services/queue.service.js';
+import { runJobNow, readableError } from '../services/queue.service.js';
 import { createRevision, currentItems } from '../services/boq.service.js';
 import {
   uploadDocument,
@@ -255,11 +255,115 @@ export const boqFromDocuments = asyncHandler(async (req, res) => {
   });
 });
 
-// POST /projects/:projectId/boq/generate — same engine, but the result is
-// stored as a new revision so the bill has a history.
+// ─── BOQ generation runs ─────────────────────────────────────────────────────
+// Generating a bill is one long model call. The app reaches this server through
+// a Netlify proxy that gives up after ~26 seconds, and a bill routinely takes
+// longer — so the request used to come back as a bare 504 while the server
+// carried on and, as often as not, finished. The POST now answers at once with
+// a run, the work continues here, and the client polls the run.
+
+// A run still 'running' after this was lost with the process that held it
+// (a deploy, or Render recycling the instance). Report it, don't wait on it.
+const RUN_STALE_MS = 10 * 60 * 1000;
+
+function isStale(run) {
+  return run.status === 'running' && Date.now() - run.startedAt.getTime() > RUN_STALE_MS;
+}
+
+function serializeRun(run) {
+  const stale = isStale(run);
+  return {
+    id: run.id,
+    status: stale ? 'failed' : run.status,
+    error: stale
+      ? 'Generation was interrupted before it finished. Nothing was billed from it — generate again.'
+      : run.error,
+    revisionId: run.revisionId,
+    generated: run.generated,
+    notes: run.result?.notes ?? [],
+    // What the prices are and when they were surveyed, so the screen can say
+    // "Lagos rates as at 1 Sep 2026" instead of showing a timeless total.
+    rates: run.result?.rates ?? null,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+  };
+}
+
+async function runGeneration(run, { project, user, documents, measurements, elements, region, standard, replace }) {
+  try {
+    const { items, notes, rates } = await generateBoq({
+      documents,
+      measurements,
+      elements,
+      orgId: user.orgId,
+      region,
+    });
+
+    if (!items.length) {
+      throw BuildqError.unavailable(
+        'The engine could not produce any billable items from these drawings.',
+        'no_items_generated'
+      );
+    }
+
+    const existing = replace ? { items: [] } : await currentItems(project.id);
+    const revision = await createRevision(project.id, [...existing.items, ...items], {
+      source: 'engine',
+      standard,
+      region,
+      createdById: user.id,
+      generatedFrom: documents.map((d) => d.id),
+      notes,
+    });
+
+    await prisma.buildqBoqGeneration.update({
+      where: { id: run.id },
+      data: {
+        status: 'succeeded',
+        finishedAt: new Date(),
+        revisionId: revision.id,
+        generated: items.length,
+        result: { notes, rates: rates ?? null },
+      },
+    });
+
+    await recordActivity({
+      orgId: user.orgId,
+      projectId: project.id,
+      action: 'generated BOQ from',
+      target: documents.map((d) => d.name).join(', ').slice(0, 120),
+      type: 'ai',
+    });
+  } catch (err) {
+    const message = readableError(err);
+    console.error(`[buildq] BOQ generation failed for ${project.id}: ${message}`);
+    await prisma.buildqBoqGeneration
+      .update({
+        where: { id: run.id },
+        data: { status: 'failed', finishedAt: new Date(), error: message.slice(0, 500) },
+      })
+      .catch((e) => console.error('[buildq] could not record failed generation:', e?.message || e));
+  }
+}
+
+// POST /projects/:projectId/boq/generate — same engine as POST /boq, but the
+// result is stored as a new revision so the bill has a history. Answers 202
+// with the run; GET .../boq/generations/:runId reports how it ended.
 export const generateForProject = asyncHandler(async (req, res) => {
   const { documentIds, region = 'Lagos', standard = 'NIQS', replace = true } = req.body || {};
 
+  // A run already under way for this project is returned rather than doubled:
+  // a second click, or a client retrying, must not pay for the bill twice.
+  const inFlight = await prisma.buildqBoqGeneration.findFirst({
+    where: { projectId: req.project.id, status: 'running' },
+    orderBy: { startedAt: 'desc' },
+  });
+  if (inFlight && !isStale(inFlight)) {
+    return res.status(202).json({ generation: serializeRun(inFlight) });
+  }
+
+  // The cheap checks stay synchronous, so a request that can never succeed is
+  // refused with its real reason instead of becoming a run that fails later.
   const { documents, measurements, elements } = await gather(
     req.buildqUser.orgId,
     req.project.id,
@@ -274,47 +378,34 @@ export const generateForProject = asyncHandler(async (req, res) => {
     );
   }
 
-  const { items, notes, rates } = await generateBoq({
+  const run = await prisma.buildqBoqGeneration.create({
+    data: { projectId: req.project.id },
+  });
+
+  // Deliberately not awaited: the response goes now, the bill lands later.
+  // runGeneration records its own failure, so nothing escapes unhandled.
+  runGeneration(run, {
+    project: req.project,
+    user: req.buildqUser,
     documents,
     measurements,
     elements,
-    orgId: req.buildqUser.orgId,
     region,
-  });
-
-  if (!items.length) {
-    throw BuildqError.unavailable(
-      'The engine could not produce any billable items from these drawings.',
-      'no_items_generated'
-    );
-  }
-
-  const existing = replace ? { items: [] } : await currentItems(req.project.id);
-  const revision = await createRevision(req.project.id, [...existing.items, ...items], {
-    source: 'engine',
     standard,
-    region,
-    createdById: req.buildqUser.id,
-    generatedFrom: documents.map((d) => d.id),
-    notes,
+    replace,
   });
 
-  await recordActivity({
-    orgId: req.buildqUser.orgId,
-    projectId: req.project.id,
-    action: 'generated BOQ from',
-    target: documents.map((d) => d.name).join(', ').slice(0, 120),
-    type: 'ai',
-  });
+  res.status(202).json({ generation: serializeRun(run) });
+});
 
-  res.status(201).json({
-    revision: serializeBoqRevision(revision),
-    generated: items.length,
-    notes,
-    // What the prices are and when they were surveyed, so the screen can say
-    // "Lagos rates as at 1 Sep 2026" instead of showing a timeless total.
-    rates,
+// GET /projects/:projectId/boq/generations/:runId
+export const generationStatus = asyncHandler(async (req, res) => {
+  const run = await prisma.buildqBoqGeneration.findFirst({
+    where: { id: req.params.runId, projectId: req.project.id },
   });
+  if (!run) throw BuildqError.notFound('That generation run does not exist.', 'generation_not_found');
+
+  res.json({ generation: serializeRun(run) });
 });
 
 // POST /projects/:projectId/boq/items/quantify

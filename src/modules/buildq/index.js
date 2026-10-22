@@ -103,7 +103,8 @@ router.get('/', (_req, res) => {
         'GET /api/buildq/analyze/:jobId',
         'POST /api/buildq/boq',
         'POST /api/buildq/documents/:documentId/detect',
-        'POST /api/buildq/projects/:projectId/boq/generate',
+        'POST /api/buildq/projects/:projectId/boq/generate (202 → poll the run)',
+        'GET /api/buildq/projects/:projectId/boq/generations/:runId',
       ],
       assistant: [
         'GET /api/buildq/assistant/status',

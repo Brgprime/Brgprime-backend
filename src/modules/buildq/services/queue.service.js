@@ -51,7 +51,7 @@ function isPermanent(err) {
 // The SDK's message is the whole HTTP body — `400 {"type":"error","error":{...`.
 // That is now shown to the user on the drawing itself, so lift the sentence out
 // of it and leave the JSON behind.
-function readableError(err) {
+export function readableError(err) {
   const raw = err?.message || String(err);
   const apiMessage = err?.error?.error?.message || err?.error?.message;
   if (apiMessage) return String(apiMessage);

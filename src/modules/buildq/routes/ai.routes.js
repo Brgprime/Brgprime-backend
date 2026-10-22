@@ -63,6 +63,9 @@ router.post(
   loadProject(),
   analysis.generateForProject
 );
+// Polled by the client after generate answers 202. Free and unlimited: it
+// reads a row, it does not call the model.
+router.get('/projects/:projectId/boq/generations/:runId', loadProject(), analysis.generationStatus);
 
 // Measuring one described item costs an AI call like any other, so it sits
 // behind the same limiter and credit check as generation.
