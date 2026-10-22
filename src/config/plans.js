@@ -81,21 +81,22 @@ export function subscriptionSnapshot(user) {
   const plan = getPlan(user.planId);
   const premiumUsed = user.premiumUsed ?? 0;
   const boostsUsed = user.boostsUsed ?? 0;
-  // Admins can publish without a listing cap, whatever plan they're on.
-  const unlimitedListings = user.role === 'admin';
+  // Admins have no listing, premium or boost caps, whatever plan they're on.
+  // Their limits and remaining counts are null (JSON has no Infinity).
+  const unlimited = user.role === 'admin';
   return {
     planId: plan.id,
     plan,
-    listingLimit: unlimitedListings ? null : plan.listings,
-    unlimitedListings,
-    premiumLimit: plan.premium,
-    boostLimit: plan.boosts,
+    unlimited,
+    listingLimit: unlimited ? null : plan.listings,
+    premiumLimit: unlimited ? null : plan.premium,
+    boostLimit: unlimited ? null : plan.boosts,
     hasLeads: plan.leads,
     isPaid: plan.id !== 'free',
     premiumUsed,
     boostsUsed,
-    premiumRemaining: Math.max(0, plan.premium - premiumUsed),
-    boostsRemaining: Math.max(0, plan.boosts - boostsUsed),
+    premiumRemaining: unlimited ? null : Math.max(0, plan.premium - premiumUsed),
+    boostsRemaining: unlimited ? null : Math.max(0, plan.boosts - boostsUsed),
     renewsAt: user.renewsAt ?? null,
   };
 }

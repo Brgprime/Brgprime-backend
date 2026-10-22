@@ -68,7 +68,7 @@ export const subscribe = asyncHandler(async (req, res) => {
 // POST /api/subscriptions/use-premium — consume one premium allowance.
 export const usePremium = asyncHandler(async (req, res) => {
   const snap = subscriptionSnapshot(req.user);
-  if (snap.premiumRemaining <= 0) throw ApiError.badRequest('No premium listings remaining.');
+  if (!snap.unlimited && snap.premiumRemaining <= 0) throw ApiError.badRequest('No premium listings remaining.');
   const user = await prisma.user.update({
     where: { id: req.user.id },
     data: { premiumUsed: { increment: 1 } },
@@ -79,7 +79,7 @@ export const usePremium = asyncHandler(async (req, res) => {
 // POST /api/subscriptions/use-boost — consume one boost allowance.
 export const useBoost = asyncHandler(async (req, res) => {
   const snap = subscriptionSnapshot(req.user);
-  if (snap.boostsRemaining <= 0) throw ApiError.badRequest('No boosts remaining.');
+  if (!snap.unlimited && snap.boostsRemaining <= 0) throw ApiError.badRequest('No boosts remaining.');
   const user = await prisma.user.update({
     where: { id: req.user.id },
     data: { boostsUsed: { increment: 1 } },
