@@ -160,13 +160,15 @@ export const createProperty = asyncHandler(async (req, res) => {
   const b = req.body;
   const snap = subscriptionSnapshot(req.user);
 
-  const currentCount = await prisma.property.count({ where: { ownerId: req.user.id } });
-  if (currentCount >= snap.listingLimit) {
-    throw new ApiError(403, 'Listing Limit Reached', {
-      code: 'LISTING_LIMIT_REACHED',
-      plan: snap.plan.name,
-      limit: snap.listingLimit,
-    });
+  if (!snap.unlimitedListings) {
+    const currentCount = await prisma.property.count({ where: { ownerId: req.user.id } });
+    if (currentCount >= snap.listingLimit) {
+      throw new ApiError(403, 'Listing Limit Reached', {
+        code: 'LISTING_LIMIT_REACHED',
+        plan: snap.plan.name,
+        limit: snap.listingLimit,
+      });
+    }
   }
 
   // Consume premium/boost allowances if requested (paid plans only).

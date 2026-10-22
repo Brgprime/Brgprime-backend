@@ -81,10 +81,13 @@ export function subscriptionSnapshot(user) {
   const plan = getPlan(user.planId);
   const premiumUsed = user.premiumUsed ?? 0;
   const boostsUsed = user.boostsUsed ?? 0;
+  // Admins can publish without a listing cap, whatever plan they're on.
+  const unlimitedListings = user.role === 'admin';
   return {
     planId: plan.id,
     plan,
-    listingLimit: plan.listings,
+    listingLimit: unlimitedListings ? null : plan.listings,
+    unlimitedListings,
     premiumLimit: plan.premium,
     boostLimit: plan.boosts,
     hasLeads: plan.leads,
