@@ -6,6 +6,12 @@ import { ok, created } from '../utils/respond.js';
 import { subscriptionSnapshot } from '../config/plans.js';
 import { TAB_TO_TYPE } from '../validators/property.validators.js';
 
+// Admins share one listings pool: every admin sees and manages listings posted
+// by any admin. Regular users only see their own.
+function ownedByScope(user) {
+  return user.role === 'admin' ? { owner: { role: 'admin' } } : { ownerId: user.id };
+}
+
 async function savedSetFor(userId) {
   if (!userId) return null;
   const favs = await prisma.favorite.findMany({
@@ -68,7 +74,7 @@ export const listProperties = asyncHandler(async (req, res) => {
     if (!req.user) throw ApiError.unauthorized('Sign in to view your listings.');
     // Remove the public-only adminStatus constraint for the owner's own view.
     where.AND = where.AND.filter((c) => !('adminStatus' in c));
-    where.AND.push({ ownerId: req.user.id });
+    where.AND.push(ownedByScope(req.user));
   }
 
   const savedSet = await savedSetFor(req.user?.id);
@@ -135,11 +141,11 @@ export const recent = asyncHandler(async (req, res) => {
   return ok(res, rows.map((p) => publicProperty(p, { savedIds: savedSet })));
 });
 
-// GET /api/properties/mine
+// GET /api/properties/mine — own listings (admins: all admin-posted listings).
 export const myListings = asyncHandler(async (req, res) => {
   const savedSet = await savedSetFor(req.user.id);
   const rows = await prisma.property.findMany({
-    where: { ownerId: req.user.id },
+    where: ownedByScope(req.user),
     orderBy: [{ createdAt: 'desc' }],
   });
   return ok(res, rows.map((p) => publicProperty(p, { savedIds: savedSet })));
